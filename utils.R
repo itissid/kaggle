@@ -1,5 +1,7 @@
 library(magrittr)
 library(lazyeval)
+source("https://raw.githubusercontent.com/ggrothendieck/gsubfn/master/R/list.R")
+source("features.R") 
 
 
 #properties with high 75th percentile of the abs_error.
@@ -83,8 +85,8 @@ recodeCharacterColumns =function(
     # Deals with character values in relavent columns of the data set.
     # Assigns NA to the missing values or empty strings.
     for(feature in features) {
-        if(is.numeric(properties %>% pull(feature) %>% na.omit) &
-           is.numeric(properties %>% pull(feature) %>% na.omit) ){
+        if(is.numeric(properties %>% dplyr::pull(feature) %>% na.omit) &
+           is.numeric(properties %>% dplyr::pull(feature) %>% na.omit) ){
             print(paste(feature, " is already numeric, skipping"));
             next
         }
@@ -242,8 +244,10 @@ trainingVtreatWrapper = function(
            summaryFn=rmseSummary,
            gridSearchFn=lmByGridSearch,
            # Params for vtreat 
-           options.vtreat=list(smFactor=0.01, rareCount=10, rareSig=0.01, pruneSig=0.01),
-           cluster=NULL) {
+           vtreat.grid=data.frame(smFactor=0.01, rareCount=10, rareSig=0.01, pruneSig=0.01),
+           makeLocalCluster=F,
+           crossFrameCluster=NULL,
+           parallelTraining=parallelTraining) {
     # Create Training and hold out data sets.
     # Treat the hold out data sets from treatments on the training only
     # Run LM, return the list of best fit model on the holdout data set.
@@ -251,52 +255,64 @@ trainingVtreatWrapper = function(
     # NOTE: All transformation and scaling is done outside of this method
     assertthat::assert_that(all(!is.null(tuneGrid) & !is.na(tuneGrid)))
     assertthat::assert_that(!is.null(holdout.metric) & !is.na(holdout.metric))
-    assertthat::assert_that(!is.null(summaryFn) & !is.na(summaryFn))
-    assertthat::assert_that(!is.null(gridSearchFn) & !is.na(gridSearchFn))
-    assertthat::assert_that(all(!is.null(options.vtreat) & !is.na(options.vtreat)))
+    assertthat::assert_that(is.function(summaryFn))
+    assertthat::assert_that(is.function(gridSearchFn))
+    assertthat::assert_that(all(!is.null(vtreat.grid) & !is.na(vtreat.grid)))
     assertthat::assert_that(all(features.restricted %in% colnames(XY)))
     assertthat::assert_that(all(features.treated %in% colnames(XY)))
-    print(paste("Vtreat options:", paste(names(options.vtreat), options.vtreat, collapse=",", sep=":"))) 
+    #print(paste("Vtreat options:", paste(names(options.vtreat), options.vtreat, collapse=",", sep=":"))) 
     XY = XY  %>% 
-        select_at(dplyr::vars(c(features.restricted, YName)))
+        dplyr::select_at(dplyr::vars(c(features.restricted, YName)))
         # transform the features for LR select only the subset that remain and remove ones that were impact coded.
     
     assertthat::assert_that(nrow(XY) > 0 )
     set.seed(123456)
     # Trying a more balanced cross folding startegy to learn from 
     list[XTrain, YTrain, XTest, YTest] = splitTrainingWrapper(XY, splitFn=splitFn, YName=YName)
-    system.time({
-        set.seed(123456)
-        XYTrain = cbind(XTrain, YTrain)
-        names(XYTrain)[ncol(XYTrain)] = YName
-        prep = createCrossFrameTreatment(
-                     XYTrain,
-                     features=features.treated,
-                     smFactor=options.vtreat$smFactor,
-                     rareSig=options.vtreat$rareSig,
-                     rareCount=options.vtreat$rareCount,
-                     YName=YName, 
-                     cluster=cluster)
-    })
-    print("*")
     set.seed(123456)
-    XTrainTreated = applyCrossFrameToX(XTrain, prep, pruneSig=options.vtreat$pruneSig, isTrain=T, yName=YName)
-    set.seed(123456)
-    XTestTreated = applyCrossFrameToX(XTest, prep, pruneSig=NULL, isTrain=F, keepDateTimeFeature=keepDateCol, yName=YName)
-    print(nrow(XTrainTreated))
-    if(nrow(XTrainTreated) == 0 | ncol(XTrainTreated) == 0) {
-        print(paste("*** WARN: there are no significant cols in training data, returning"))
-        print(prep$treatments$scoreFrame)
-        return(NULL)
-    }
-    print("**")
-    assertthat::assert_that(setequal(colnames(XTestTreated), colnames(XTrainTreated)))
-    bestFit = gridSearchFn(
-        train = XTrainTreated, target = YTrain, ncores = 6, tuneGrid = tuneGrid,
-        metric =holdout.metric , summaryFunction = summaryFn)
-    pred = predict(bestFit, XTestTreated)
-    print("***")
-    return(list(bestFit, pred, sqrt(mean((YTest - pred)^2))))
+    XYTrain = cbind(XTrain, YTrain)
+    names(XYTrain)[ncol(XYTrain)] = YName
+    prepFrames = createCrossFrameTreatment(
+                 XYTrain,
+                 features=features.treated,
+                 vtreat.grid, 
+                 YName=YName, 
+                 makeLocalCluster=makeLocalCluster, 
+                 crossFrameCluster=crossFrameCluster) # damn this for now?
+    print(".")
+    snow::parLapply(crossFrameCluster, prepFrames, function(prep, applyCrossFrameToX, gridSearchFn, parallelTraining) {
+        #set.seed(123456)
+        library(magrittr) 
+
+        options.vtreat = prep$opts.vtreat 
+        XTrainTreated = applyCrossFrameToX(XTrain, prep, pruneSig=options.vtreat$pruneSig, isTrain=T, yName=YName)
+        #set.seed(123456)
+        XTestTreated = applyCrossFrameToX(XTest, prep, pruneSig=NULL, isTrain=F, keepDateTimeFeature=keepDateCol, yName=YName)
+        print(nrow(XTrainTreated))
+        if(nrow(XTrainTreated) == 0 | ncol(XTrainTreated) == 0) {
+            print(paste("*** WARN: there are no significant cols in training data, returning"))
+            print(prep$treatments$scoreFrame)
+            return(NULL)
+        }
+        if(!base::setequal(colnames(XTestTreated), colnames(XTrainTreated))) {
+            print("XTest and XTrain cols are not the same:")
+            print(colnames(XTestTreated))
+            print(colnames(XTrainTreated))
+            print("Aborting")
+            stopifnot(TRUE)
+        }
+        print("...")
+        assertthat::assert_that(setequal(colnames(XTestTreated), colnames(XTrainTreated)))
+        bestFit = gridSearchFn(
+            train = XTrainTreated, target = YTrain, ncores = 6, tuneGrid = tuneGrid,
+            metric = holdout.metric , summaryFunction = summaryFn, allowParallel=parallelTraining)
+        pred = predict(bestFit, XTestTreated)
+        print("....")
+        bestFit$holdoutPred = pred
+        bestFit$holdout.rmse = sqrt(mean((YTest - pred)^2))
+        return(bestFit)
+        print(".....")
+    }, applyCrossFrameToX, gridSearchFn, parallelTraining)
 }
 
 charColumnEncode = function(dataset) {
