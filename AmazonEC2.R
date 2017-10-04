@@ -41,9 +41,9 @@ createSgNameFromTime = function() {
 
 
 # I edited the startCluster function so that it has a "security groups" option.
-startCluster <- function (ami, 
-                          instance.count, 
-                          instance.type, 
+startCluster <- function (ami,
+                          instance.count,
+                          instance.type,
                           keypair="sid-aws-key", # This is needed just for access
                           verbose = TRUE) 
 {
@@ -65,12 +65,13 @@ startCluster <- function (ami,
            sgroup=security.group,
            )
     instances = as.character(sapply(res, function(x) as.character(x$instanceId[[1]])))
+
     #if (verbose) {
     #    cat("using this cmd:\n")
     #    print(cmd)
     #}
     sleep.while.pending(instances, verbose=verbose, sleep.time=10)
-    dnsNames = getPublicDNSFromInstances(instances)
+    dnsNames = getPrivateDNSFromReservations(res)
     return(clusterSpecFromInstances(dnsNames))
 }
 
@@ -80,11 +81,23 @@ clusterSpecFromInstances = function(instances) {
     return(instances)
 }
 
-getExistingInstances = function() {
+getExistingInstancesPublicDNS = function() {
     sapply(aws.ec2::describe_instances(), function(x) {
         sapply(x$instancesSet, function(instance) instance$dnsName) 
     })
 }
+
+getExistingInstancesPrivateDNS = function() {
+    reservations = aws.ec2::describe_instances()
+    instancesSets = sapply(reservations, function(x) {x$instancesSet})
+    instanceSets.flat = unlist(instancesSets, recursive=T)
+    instanceSets.flat[names(instanceSets.flat) == "privateDnsName"]
+}
+
+getPrivateDNSFromReservations = function(reservations) {
+    instancesSets = sapply(reservations, function(x) {x$privateDnsName})
+}
+
 getPublicDNSFromInstances = function(instances) {
    sapply(instances, function(x) aws.ec2::describe_instances(x)[[1]]$instancesSet[[1]]$dnsName)
 }
