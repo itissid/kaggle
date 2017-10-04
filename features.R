@@ -75,6 +75,61 @@ discretizetime.month = function(data, time.feature.name=date, time.feature.name.
     data %>% dplyr::mutate(!!quo_name(n) := lubridate::make_date(year=lubridate::year(!!o), month=lubridate::month(!!o), day=1))
 }
 
+transformFeaturesForLinearRegression = function(
+        data, 
+        txn.features =c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property")) {
+    # TODO: parameterize the features we want to transform as well
+    # If the transformed features are in the chosen_features then they must be in the data, else error
+    # I use the chosen set to create the training data and the test data set. Transformation of features
+    # must also happen for a proper subset of the chosen ones only.
+    #colexists = function(colname) {
+    #    colname %in% colnames(data)
+    #}
+    # Must be in among the chosen ones.
+    # and must be in the data as well.
+    assertthat::assert_that(all(mapply((function(i) {i %in% chosen_features}), txn.features)))
+    assertthat::assert_that(all(mapply((function(i) {i %in% colnames(data)}), txn.features)))
+
+    #mutate.ifcolexists = function(x, colname, new.name, mutation.fn.instance) {
+    #    column = enquo(colname)
+    #    if(column %in% chosen_features) {
+    #        if(column %in% colnames(x)){
+    #    	return(x %<>% mutation.fn.instance(colname, new.name))
+    #        } else {
+    #            stopifnot(TRUE) # If I chose the feature to be transformed it must be in the data.
+    #        }
+    #    } 
+    #    print(paste("* Skipping column", quo_name(column)))
+    #    return(x)
+    #}
+
+    ## Custom mutation fn
+    #mutation.fn = function(x, colname, new.name){
+    #        new.column = enquo(new.name)
+    #        column = enquo(colname)
+    #        x %<>% dplyr::mutate(!!new.column := log10(!!column))  %>% 
+    #            dplyr::select(!!column)
+    #}
+    
+    for(f in txn.features) {
+        data %<>%
+            mutate(!!f := log(!!quo(!!as.name(f))))
+    }
+    #XY = data %>%
+    #	mutate.ifcolexists(area_lot, log_area_lot, mutation.fn) %>% 
+    #	mutate.ifcolexists(area_total_calc, log_area_total_calc, mutation.fn) %>% 
+    #	mutate.ifcolexists(tax_total,log_tax_total, mutation.fn) %>% 
+    #	mutate.ifcolexists(tax_land, log_tax_land, mutation.fn.create) %>% 
+    #	mutate.ifcolexists(tax_property, log_tax_property, mutation.fn.create) 
+
+    #chosen_features.ext = c(colnames(data), setdiff(colnames(XY), colnames(data)))
+    #assertthat::assert_that(len(chosen_features.ext) > len(chosen_features))
+
+    #Select the features you want 
+    # XY %<>% dplyr::select_(.dots=chosen_features.ext)
+    return(data)
+}
+
 makeNonNAConjunctionExpr = function(predictors) {
     # Given a char vector c("a", "b", "c") this returns an expression:
     # ~!is.na(a) & !is.na(b) & !is.na(c)
@@ -139,31 +194,68 @@ applyImpactModel = function(condprobmodel, xcol) {
 createCrossFrameTreatment = function(
         XY, 
         features, # Only these variables will be used for creating treatment
-        smFactor=0.01, # vary these for tuning
-        rareSig=0.01,
-        rareCount=10,
+        #smFactor=0.01, # vary these for tuning
+        #rareSig=0.01,
+        #rareCount=10,
+        vtreat.grid, 
         YName = "logerror", 
-        cluster=NULL) {
-    # parallel for vtreat
+        makeLocalCluster=F, 
+        crossFrameCluster=NULL) {
     assertthat::assert_that(all(features %in% colnames(XY)))
-    fn = paste("cache/crossFrame", "_smFactor_", smFactor, "_rareSig_", rareSig, "_rareCount_", rareCount, sep="")
-    if(!exists(fn)) {
-        prep = vtreat::mkCrossFrameNExperiment(
+    clusterEvalQ(crossFrameCluster, ({
+                    print("*")
+                     library(vtreat)
+                     library(snow)
+                    print("**")
+    }))
+    res = snow::parLapply(crossFrameCluster, apply(vtreat.grid, 1, as.list), 
+            function(opts.vtreat, XY, freatures, YName, makeLocalCluster) {
+                rareCount = opts.vtreat$rareCount
+                rareSig = opts.vtreat$rareSig
+                smFactor = opts.vtreat$smFactor
+                fn = paste("cache/crossFrame", 
+                           "_smFactor_", smFactor, 
+                           "_rareSig_", rareSig, 
+                           "_rareCount_", rareCount, sep="")
+                cluster = NULL
+                if(makeLocalCluster == T) {
+                    cluster = snow::makeCluster(4, outfile="cluster.log")
+                }
+                print("***")
+                #print(class(XY))
+                #print(head(XY))
+                #print(features)
+                #print(YName)
+                #print(fn)
+                #print(cluster)
+
+                #if(!exists(fn)) {
+                prep = vtreat::mkCrossFrameNExperiment(
+                    XY, 
+                    features, # Only treat these variables
+                    YName, 
+                    rareCount=rareCount,
+                    rareSig=rareSig,
+                    smFactor=smFactor,
+                    parallelCluster=cluster)
+                    #print(prep)
+                    #if(!dir.exists("cache")) dir.create("cache")
+                    #saveRDS(prep, fn)
+                #} else {
+                #    prep = readRDS(fn)
+                #}
+                print("*****")
+                prep$opts.vtreat=opts.vtreat
+                return(prep)
+            }, 
             XY, 
             features, # Only treat these variables
             YName, 
-            rareCount=rareCount,
-            rareSig=rareSig,
-            smFactor=smFactor,
-            parallelCluster=cluster)
-        saveRDS(prep, fn)
-    } else{
-        prep = readRDS(fn)
-    }
-    # Remove the impact coded categorical variables
-    return(prep)
-    
+            makeLocalCluster)
+    print("**** ****")
+    return(res)
 }
+    
 
 applyCrossFrameToX = function(
        X, prep, pruneSig=0.01, yName="logerror", isTrain=T, 
@@ -175,15 +267,15 @@ applyCrossFrameToX = function(
     newVars <- scoreFrame$varName[scoreFrame$sig<1/nrow(scoreFrame)]
     assertthat::assert_that(!yName %in% colnames(X)) 
     if(keepDateTimeFeature == T) {
-        dateVars = scoreFrame %>% dplyr::filter(origName==dateTimeColname) %>% pull(varName)
+        dateVars = scoreFrame %>% dplyr::filter(origName==dateTimeColname) %>% dplyr::pull(varName)
         newVars = base::union(dateVars, newVars)
     }
     print(paste(length(newVars), " variables created by preparation"))
-    treated.features = scoreFrame %>% dplyr::distinct(origName) %>% pull(origName)
+    treated.features = scoreFrame %>% dplyr::distinct(origName) %>% dplyr::pull(origName)
     # Add to X the prepared features and remove the features from which prepared features were created
     if(isTrain==T) {
         # Training data is combined with the cross frame
-        XTreated = cbind(X %>% select(-one_of(treated.features)), prep$crossFrame %>% select(newVars)) 
+        XTreated = cbind(X %>% dplyr::select(-dplyr::one_of(treated.features)), prep$crossFrame %>% dplyr::select(newVars)) 
         print(dim(XTreated))
         XTreated = XTreated %>% dplyr::select(-dplyr::matches("(.*catP)|(.*catD)"))
         print(dim(XTreated))
@@ -191,7 +283,7 @@ applyCrossFrameToX = function(
         # Testing data is combined with the preparation applied to the test data set
         XTestTreated <- vtreat::prepare(prep$treatments, X,
                                       pruneSig=pruneSig,varRestriction=newVars)
-        XTreated = cbind(X %>% select(-dplyr::one_of(treated.features)), XTestTreated) 
+        XTreated = cbind(X %>% dplyr::select(-dplyr::one_of(treated.features)), XTestTreated) 
         XTreated = XTreated %>% dplyr::select(-dplyr::matches("(.*catP)|(.*catD)"))
     }
     print(paste(length(colnames(XTreated)), " variables in treated data"))
@@ -267,7 +359,7 @@ knn.opts = function() {
     return(list(preds.location, preds.all, var.names, methods.knn))
 
 }
-# Call knnImpute.gen.wrapper
+# Call knnImpute.gen.wrapper instead of knnImpute.gen directly
 knnImpute.gen.wrapper = function(
                      data,
                      dataset.type, 
@@ -285,7 +377,7 @@ knnImpute.gen.wrapper = function(
     knnImpute.gen(data, dataset.type, k, preds, var.names, cl=cluster, methods.knn=methods.knn)
 }
 
-knnImpute.gen = function(
+knnImpute.gen = function (
                      data,
                      dataset.type, 
                      k=c(5,15), 
