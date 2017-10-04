@@ -1,9 +1,10 @@
 library(magrittr)
-library(data.table)
 library(xgboost)
 library(caret) # For Folds
 library(ModelMetrics)
 library(ggplot2)
+source("utils.R")
+library(foreach)
 ###################
 # 2 function for xgboost
 ###################
@@ -34,7 +35,7 @@ maeSummary <- function (data,
 rmseSummary <- function (data,
                         lev = NULL,
                         model = NULL) {
-      out <- mse(data$obs, data$pred)  
+      out <- ModelMetrics::mse(data$obs, data$pred)  
       names(out) <- "RMSE"
       out
 }
@@ -113,16 +114,18 @@ Workflow:
 
 xgBoostGridSearch = function(
            train, target, ncores=6, tuneGrid=xgbGrid.default,
-           metric='MAE', summaryFunction=maeSummary) {
+           metric='MAE', summaryFunction=maeSummary, allowParallel=T) {
     require(caret)
-     
+    if(allowParallel== T) {
+        doMC::registerDoMC(cores = parallel::detectCores())
+    } 
     xgbTrControl <- trainControl(
       method = "repeatedcv",
       number = 5,
       repeats = 2,
       verboseIter = TRUE,
       returnData = TRUE,
-      allowParallel = TRUE,
+      allowParallel = allowParallel,
       savePredictions="final",
       summaryFunction=summaryFunction
     )
@@ -143,6 +146,70 @@ xgPredict = function(xgbModel, dtest) {
     preds = predict(xgbModel, dtest) 
 }
 
-xgTrainingWrapperWithVTreat = function() {
+vtreat.default.grid = expand.grid(
+    list(smFactor=c(0.1, 0.01, 0.001), 
+         rareCount=c(10, 50), 
+         rareSig=c(0.01, 0.05), 
+         pruneSig=c(0.01, 0.05)))
+
+xgTrainingWrapperWithVTreat = function(transactions, 
+                                       features.restricted, 
+                                       features.treated, 
+                                       removeOutliers=T, 
+                                       discretizeDateMonth=T,
+                                       vtreat.grid=vtreat.default.grid, 
+                                       YName="logerror",
+                                       xgBoostTrainingGrid=xgbGrid.default,
+                                       splitFn=splitKWayCrossFold,
+                                       holdout.metric='RMSE',
+                                       holdout.metric.fn=rmseSummary,
+                                       makeLocalCluster=F,
+                                       parallelTraining=F,
+                                       snowCluster=NULL) {
+    # xgboost with custom defaults. First it creates the cross frame using vtreat. This splits the training data 
+    # into 2. The treatments are apploed to both. The boosting models are trained using different vtreat options.
+    # the boosting model itself can train over a grid if one is provided. 
+    # 1. the localhost cluster parallelizes the cross frame creation based on vtreat.grid.
+    # 2. the remoteCluster is used to parallelize the computation of the boosting models themselves.
+    XY = transactions %>% select_at(dplyr::vars(c(dense.features,YName)))  %>%
+        transformFeaturesForLinearRegression(txn.feature = scaled.features)
+    if(removeOutliers==T) {
+        XY %<>% 
+            dplyr::filter(logerror <=0.4 & logerror >=-0.4) 
+    } 
+    if(discretizeDateMonth == T) {
+        XY %<>%
+            discretizetime.month(time.feature.name.new=date) 
+    }
+    trainingVtreatWrapper(XY,
+                          features.restricted=features.restricted,
+                          features.treated=features.treated,
+                          YName=YName, 
+                          keepDateCol=discretizeDateMonth,
+                          splitFn=splitFn,
+                          tuneGrid = xgBoostTrainingGrid, 
+                          holdout.metric =holdout.metric, 
+                          summaryFn = holdout.metric.fn, 
+                          gridSearchFn = xgBoostGridSearch,
+                          vtreat.grid,
+                          makeLocalCluster=makeLocalCluster, 
+                          crossFrameCluster=snowCluster,
+                          parallelTraining=parallelTraining) 
+    #results = snow::parLapply(cl=snowCluster, 
+    #                          apply(vtreat.grid, 1, as.list), parallelTraining,
+    #                          XY, 
+    #                          features.restricted=features.restricted,
+    #                          splitFn=splitFn,
+    #                          features.treated=features.treated,
+    #                          YName=YName, 
+    #                          tuneGrid = xgBoostTrainingGrid, 
+    #                          holdout.metric =holdout.metric, 
+    #                          summaryFn = holdout.metric.fn, 
+    #                          gridSearchFn = xgBoostGridSearch,
+    #                          makeLocalCluster=F) 
+    #datetime  = format(Sys.time(), "%Y%m%d_%H_%M_%S")
+    #fn = paste("results/xgboost_with_vtreat_", datetime, sep="")
+    #print(paste("saving xgboost model to ", fn), sep="")
+    #saveRDS(results, fn)
+    #return(results)
 }
-    
