@@ -310,6 +310,7 @@ trainingVtreatWrapper = function(
         print("....")
         bestFit$holdoutPred = pred
         bestFit$holdout.rmse = sqrt(mean((YTest - pred)^2))
+        bestFit$vtreat.opts = prepFrame$opts.vtreat
         return(bestFit)
         print(".....")
     }, applyCrossFrameToX, gridSearchFn, parallelTraining)

@@ -202,10 +202,11 @@ createCrossFrameTreatment = function(
         makeLocalCluster=F, 
         crossFrameCluster=NULL) {
     assertthat::assert_that(all(features %in% colnames(XY)))
-    clusterEvalQ(crossFrameCluster, ({
+    snow::clusterEvalQ(crossFrameCluster, ({
                     print("*")
                      library(vtreat)
                      library(snow)
+                     library(doParallel)
                     print("**")
     }))
     res = snow::parLapply(crossFrameCluster, apply(vtreat.grid, 1, as.list), 
