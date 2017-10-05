@@ -116,8 +116,12 @@ xgBoostGridSearch = function(
            train, target, ncores=6, tuneGrid=xgbGrid.default,
            metric='MAE', summaryFunction=maeSummary, allowParallel=T) {
     require(caret)
+    cl = NULL
     if(allowParallel== T) {
-        doMC::registerDoMC(cores = parallel::detectCores())
+        library(doParallel); 
+        print("Starting parallel cluster for training")
+        cl <- parallel::makeCluster(parallel::detectCores()); 
+        doParallel::registerDoParallel(cl) 
     } 
     xgbTrControl <- trainControl(
       method = "repeatedcv",
@@ -139,6 +143,14 @@ xgBoostGridSearch = function(
       tuneGrid = tuneGrid,
       method = "xgbTree"
     )
+
+    if(allowParallel== T) {
+        print("Stopping parallel cluster for training")
+        parallel::stopCluster(cl)
+        doParallel::stopImplicitCluster()
+        gc()
+    }
+    
     return(xgbTrain)
 }
 
