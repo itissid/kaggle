@@ -122,7 +122,7 @@ xgBoostGridSearch = function(
     if(allowParallel== T) {
         library(doParallel);
         print("Starting parallel cluster for training")
-        cl <- parallel::makeCluster(parallel::detectCores());
+        cl <- parallel::makeCluster(parallel::detectCores(), outfile="cluster.log");
         doParallel::registerDoParallel(cl)
     }
     xgbTrControl <- trainControl(
@@ -180,7 +180,7 @@ xgTrainingWrapper = function(XY,
                              holdout.metric.fn=rmseSummary,
                              parallelTraining=F
                              ) {
-        cat(".x")
+        print(".x")
         XY = XY %>% select_at(dplyr::vars(c(features.restricted, YName)))  %>%
             transformFeaturesForLinearRegression(txn.feature = features.scaled) %>%
             mutate_if(is.factor, funs(as.numeric(as.character(.))))
@@ -188,14 +188,14 @@ xgTrainingWrapper = function(XY,
             XY %<>%
                 dplyr::filter(logerror <=0.4 & logerror >=-0.4)
         }
-        cat("..x")
+        print("..x")
         list[XTrain, YTrain, XTest, YTest] = splitTrainingWrapper(XY, splitFn=splitFn, YName=YName)
-        cat("...x")
+        print("...x")
         bestFit = xgBoostGridSearch(
             train = XTrain, target = YTrain, ncores = 6, tuneGrid = xgBoostTrainingGrid,
             metric = holdout.metric , summaryFunction = holdout.metric.fn, allowParallel=parallelTraining)
-        pred = predict(bestFit, XTestTreated)
-        cat("...x")
+        pred = predict(bestFit, XTest)
+        print("...x")
         bestFit$holdoutPred = pred
         bestFit$holdout.rmse = sqrt(mean((YTest - pred)^2))
         return(bestFit)
