@@ -1,7 +1,7 @@
 library(magrittr)
 library(lazyeval)
 source("https://raw.githubusercontent.com/ggrothendieck/gsubfn/master/R/list.R")
-source("features.R") 
+source("features.R")
 
 
 #properties with high 75th percentile of the abs_error.
@@ -18,7 +18,7 @@ readAndTransformData = function() {
       area_basement = basementsqft,
       area_patio = yardbuildingsqft17,
       area_shed = yardbuildingsqft26,
-      area_pool = poolsizesum, 
+      area_pool = poolsizesum,
       area_lot = lotsizesquarefeet,
       area_garage = garagetotalsqft,
       area_firstfloor_finished = finishedfloor1squarefeet,
@@ -26,7 +26,7 @@ readAndTransformData = function() {
       area_base = finishedsquarefeet6,
       area_live_finished = finishedsquarefeet12,
       area_liveperi_finished = finishedsquarefeet13,
-      area_total_finished = finishedsquarefeet15, 
+      area_total_finished = finishedsquarefeet15,
       area_unknown = finishedsquarefeet50,
       num_unit = unitcnt,
       num_story = numberofstories,
@@ -34,15 +34,15 @@ readAndTransformData = function() {
       num_bathroom = bathroomcnt,
       num_bedroom = bedroomcnt,
       num_bathroom_calc = calculatedbathnbr,
-      num_bath = fullbathcnt, 
+      num_bath = fullbathcnt,
       num_75_bath = threequarterbathnbr,
       num_fireplace = fireplacecnt,
       num_pool = poolcnt,
-      num_garage = garagecarcnt, 
+      num_garage = garagecarcnt,
       region_county = regionidcounty,
       region_city = regionidcity,
       region_zip = regionidzip,
-      region_neighbor = regionidneighborhood, 
+      region_neighbor = regionidneighborhood,
       tax_total = taxvaluedollarcnt,
       tax_building = structuretaxvaluedollarcnt,
       tax_land = landtaxvaluedollarcnt,
@@ -71,11 +71,22 @@ readAndTransformData = function() {
       date = transactiondate
     )
     # Split the census raw data into meaningful categories
-    properties %<>% 
-        dplyr::mutate(census = as.character(rawcensustractandblock), 
-               tract_number = as.numeric(stringr::str_sub(census,5,11)), 
+    properties %<>%
+        dplyr::mutate(census = as.character(rawcensustractandblock),
+               tract_number = as.numeric(stringr::str_sub(census,5,11)),
                tract_block = as.numeric(stringr::str_sub(census,12)))
     return(list(transactions %>% dplyr::left_join(properties, by="id_parcel"), properties))
+}
+
+
+recodeHelper = function(X, colname) {
+    X %<>% dplyr::distinct_(.dots=colname)
+    X %<>% dplyr::filter_at(vars(colname), all_vars(trimws(.) !="")) # Don't include any missing values
+    right.col.name = paste(colname, "_tmp", sep="")
+    right.coded.col.name = paste(colname, "_coded", sep="")
+    colnames(X) = c(right.col.name)
+    X[[right.coded.col.name]] = 1:nrow(X)
+    return(X)
 }
 
 recodeCharacterColumns =function(
@@ -91,24 +102,24 @@ recodeCharacterColumns =function(
             next
         }
         print(paste("Recoding feature to numeric:", feature))
-        f1 = data.frame(rbind(properties %>% dplyr::distinct_(.dots=feature), 
-                transactions %>% dplyr::distinct_(.dots=feature))) %>% distinct_(.dots=feature)
-        f1 %<>% dplyr::filter_at(vars(feature), all_vars(trimws(.) !="")) # Don't include any missing values
-        right.col.name = paste(feature, "_tmp", sep="")
-        right.coded.col.name = paste(feature, "_coded", sep="")
-        colnames(f1) = c(right.col.name)
-        f1[[right.coded.col.name]] = 1:nrow(f1)
+        # Create a data frame with numeric values per factor
+        f1 = data.frame(rbind(properties %>% dplyr::distinct_(.dots=feature),
+                transactions %>% dplyr::distinct_(.dots=feature))) %>%
+                recodeHelper(feature) #distinct_(.dots=feature)
         # Now join and get rid of the old column
         # NA's will be left in place of empty strings
+
+        right.col.name = paste(feature, "_tmp", sep="")
+        right.coded.col.name = paste(colname, "_coded", sep="")
         transactions.t  = transactions %>% dplyr::left_join(f1, by=setNames(right.col.name, feature))
-        properties.t  = properties %>% dplyr::left_join(f1, by=setNames(right.col.name, feature)) 
-      
-        # Remove the character columns and rename the new coded columns 
+        properties.t  = properties %>% dplyr::left_join(f1, by=setNames(right.col.name, feature))
+
+        # Remove the character columns and rename the new coded columns
         transactions.t = transactions.t[, -which(names(transactions) %in% c(feature, right.col.name))] %>%
             dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
         properties.t = properties.t[, -which(names(properties) %in% c(feature, right.col.name))] %>%
             dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
-         
+
         assertthat::assert_that(all(dim(transactions) == dim(transactions.t)))
         assertthat::assert_that(all(dim(properties) == dim(properties.t)))
         assertthat::assert_that(base::setequal(colnames(transactions),colnames(transactions.t)))
@@ -123,7 +134,7 @@ convertToFactors = function(transactionPropertyData, features=c(
                                 "region_city", "region_neighbor", "region_zip", "region_county",
                                 "zoning_landuse", "zoning_landuse_county", "zoning_property",
                                 "tract_number", "tract_block", "build_year")) {
-    transactionPropertyData %<>% mutate_at(vars(features), funs(factor(as.numeric(.)))) 
+    transactionPropertyData %<>% mutate_at(vars(features), funs(factor(as.numeric(.))))
 }
 
 transformCoords = function(transactionPropertyData) {
@@ -153,37 +164,37 @@ cutTransactionsPerCounty = function(transactions) {
 }
 
 groupBySpatialFeature = function(df, f.spatial, var_name){
-    #mutate_call = interp(~!is.na(a), a=as.name(var_name)); 
+    #mutate_call = interp(~!is.na(a), a=as.name(var_name));
     var_name.enquo = enquo(var_name)
     f.spatial.enquo = enquo(f.spatial)
     var_name_missing = paste(quo_name(var_name.enquo), "_missing", sep="")
     var_name_present = paste(quo_name(var_name.enquo), "_present", sep="")
-    # You can follow one of two patterns with regards to using dplyr in functions: 
+    # You can follow one of two patterns with regards to using dplyr in functions:
     # 1. USE NSE for function args in calls and use enquo and !! patterns for use with dplyr verbs.
     # 2. USE non-NSE semantics, i.e. use strings as function arguments and using !!as.name(.) pattern in dplyr verbs.
-    # Note, that if you need to make new variable names from strings 
-    # then u just needs to make sure to use !! for LHS of expression and 
+    # Note, that if you need to make new variable names from strings
+    # then u just needs to make sure to use !! for LHS of expression and
     # !!as.name(<string>) on the RHS eg: summarize(ct = sum(!!as.name(var_name_present), na.rm=TRUE)) .
     # (1) seems an easier choice, but sometimes new names are needed for which strings need to be created.
     # dplyr vars() used  in the *_all, *_at, *_each functions can mix strings and names making programming easier.
-    b = df %>% 
+    b = df %>%
         # Below call is more understandable instead of: mutate_(.dots=setNames(list(mutate_call), var_name_present)) %>%
-        dplyr::mutate(!!var_name_present := !is.na(!!var_name.enquo)) %>% 
+        dplyr::mutate(!!var_name_present := !is.na(!!var_name.enquo)) %>%
         select_at(dplyr::vars(!!f.spatial.enquo, var_name_present)) %>%
-        group_by_at(dplyr::vars(!!f.spatial.enquo)) %>% 
+        group_by_at(dplyr::vars(!!f.spatial.enquo)) %>%
         # One can also do: summarize(ct = sum(!!as.name(var_name_present), na.rm=TRUE)) %>% head(50)
         summarize_at(var_name_present , sum, na.rm=TRUE)
 
-    a = df %>% 
-        dplyr::mutate(!!var_name_missing := !is.na(!!var_name.enquo)) %>% 
+    a = df %>%
+        dplyr::mutate(!!var_name_missing := !is.na(!!var_name.enquo)) %>%
         select_at(dplyr::vars(!!f.spatial.enquo, var_name_missing)) %>%
         group_by_at(dplyr::vars(!!f.spatial.enquo))  %>%
         summarize_at(var_name_missing, sum, na.rm=TRUE)
     return(list(missing=a, present=b))
 }
 
-countyGrouping = function(df, var_name){ 
-    
+countyGrouping = function(df, var_name){
+
     groupBySpatialFeature(df, region_county, var_name)
 }
 
@@ -192,7 +203,7 @@ countyGrouping = function(df, var_name){
 splitTrainingData = function(Y, split_percent=0.75) {
     set.seed(998)
     inTraining <- createDataPartition(Y, p = split_percent, list = FALSE)
-    return(inTraining)	
+    return(inTraining)
 }
 splitKWayStratifiedCrossFold = function(Y, split_percent) {
     assertthat::assert_that(split_percent < 1 & split_percent > 0)
@@ -210,7 +221,7 @@ splitKWayStratifiedCrossFold = function(Y, split_percent) {
     return(pStrat[[1]]$train)
 }
 
-splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingData, 
+splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingData,
                                 YName="logerror") {
     trainingIndices = splitFn(Y = XY %>% dplyr::select_at(dplyr::vars(YName)), split_percent = split_percent)
 
@@ -220,7 +231,7 @@ splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingDat
     XTrain = XYTrain %>% dplyr::select(-dplyr::contains(YName))
     XTest = XYTest %>% dplyr::select(-dplyr::contains(YName))
     YTrain = XYTrain %>% dplyr::pull(YName)
-    YTest = XYTest %>% dplyr::pull(YName) 
+    YTest = XYTest %>% dplyr::pull(YName)
     assertthat::assert_that(length(YTrain) == nrow(XTrain))
     assertthat::assert_that(length(YTest) == nrow(XTest))
     assertthat::assert_that(base::setequal(colnames(XTest), colnames(XTrain)) == T)
@@ -232,18 +243,18 @@ splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingDat
 }
 
 trainingVtreatWrapper = function(
-           XY, 
-           features.restricted, 
-           features.treated, 
-           YName, 
+           XY,
+           features.restricted,
+           features.treated,
+           YName,
            keepDateCol=T,
-           splitFn=splitKWayCrossFold, 
+           splitFn=splitKWayCrossFold,
            # Params for training to caret
            tuneGrid=data.frame(intercept=T),
            holdout.metric="RMSE",
            summaryFn=rmseSummary,
            gridSearchFn=lmByGridSearch,
-           # Params for vtreat 
+           # Params for vtreat
            vtreat.grid=data.frame(smFactor=0.01, rareCount=10, rareSig=0.01, pruneSig=0.01),
            makeLocalCluster=F,
            crossFrameCluster=NULL,
@@ -251,7 +262,7 @@ trainingVtreatWrapper = function(
     # Create Training and hold out data sets.
     # Treat the hold out data sets from treatments on the training only
     # Run LM, return the list of best fit model on the holdout data set.
-    # Return the best model fit and predictions on the holdout data 
+    # Return the best model fit and predictions on the holdout data
     # NOTE: All transformation and scaling is done outside of this method
     assertthat::assert_that(all(!is.null(tuneGrid) & !is.na(tuneGrid)))
     assertthat::assert_that(!is.null(holdout.metric) & !is.na(holdout.metric))
@@ -260,14 +271,14 @@ trainingVtreatWrapper = function(
     assertthat::assert_that(all(!is.null(vtreat.grid) & !is.na(vtreat.grid)))
     assertthat::assert_that(all(features.restricted %in% colnames(XY)))
     assertthat::assert_that(all(features.treated %in% colnames(XY)))
-    #print(paste("Vtreat options:", paste(names(options.vtreat), options.vtreat, collapse=",", sep=":"))) 
-    XY = XY  %>% 
+    #print(paste("Vtreat options:", paste(names(options.vtreat), options.vtreat, collapse=",", sep=":")))
+    XY = XY  %>%
         dplyr::select_at(dplyr::vars(c(features.restricted, YName)))
         # transform the features for LR select only the subset that remain and remove ones that were impact coded.
-    
+
     assertthat::assert_that(nrow(XY) > 0 )
     set.seed(123456)
-    # Trying a more balanced cross folding startegy to learn from 
+    # Trying a more balanced cross folding startegy to learn from
     list[XTrain, YTrain, XTest, YTest] = splitTrainingWrapper(XY, splitFn=splitFn, YName=YName)
     set.seed(123456)
     XYTrain = cbind(XTrain, YTrain)
@@ -275,16 +286,16 @@ trainingVtreatWrapper = function(
     prepFrames = createCrossFrameTreatment(
                  XYTrain,
                  features=features.treated,
-                 vtreat.grid, 
-                 YName=YName, 
-                 makeLocalCluster=makeLocalCluster, 
+                 vtreat.grid,
+                 YName=YName,
+                 makeLocalCluster=makeLocalCluster,
                  crossFrameCluster=crossFrameCluster) # damn this for now?
     print(".")
     snow::parLapply(crossFrameCluster, prepFrames, function(prep, applyCrossFrameToX, gridSearchFn, parallelTraining) {
         #set.seed(123456)
-        library(magrittr) 
+        library(magrittr)
 
-        options.vtreat = prep$opts.vtreat 
+        options.vtreat = prep$opts.vtreat
         XTrainTreated = applyCrossFrameToX(XTrain, prep, pruneSig=options.vtreat$pruneSig, isTrain=T, yName=YName)
         #set.seed(123456)
         XTestTreated = applyCrossFrameToX(XTest, prep, pruneSig=NULL, isTrain=F, keepDateTimeFeature=keepDateCol, yName=YName)
@@ -310,7 +321,7 @@ trainingVtreatWrapper = function(
         print("....")
         bestFit$holdoutPred = pred
         bestFit$holdout.rmse = sqrt(mean((YTest - pred)^2))
-        bestFit$vtreat.opts = prepFrame$opts.vtreat
+        bestFit$crossFrame = prep
         return(bestFit)
         print(".....")
     }, applyCrossFrameToX, gridSearchFn, parallelTraining)

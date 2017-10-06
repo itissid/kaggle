@@ -13,7 +13,7 @@ getNeighborhoodFeatures = function() {
 
 getFeatures = function() {
     # flag_tub and other pooltypeid properties were removed
-    f.amenities.sparse = c("deck", "aircon", "num_fireplace", "num_pool", "pooltypeid10", "area_pool") 
+    f.amenities.sparse = c("deck", "aircon", "num_fireplace", "num_pool", "pooltypeid10", "area_pool")
 
     f.amenities = c("flag_tub", "heating")
     f.location = c("longitude", "latitude")
@@ -24,9 +24,9 @@ getFeatures = function() {
     # Building specific features
     f.building = c("num_bathroom", "num_bedroom",  "build_year", "num_unit", "quality", "num_room")
 
-    # Following are atleast 70% missing to as much as 99% 
+    # Following are atleast 70% missing to as much as 99%
     f.building.sparse = c("num_garage", "num_story",  "num_75_bath","framing",  "material", "architectural_style") # largely missing...
-    f.tax = c("tax_total", "tax_land", "tax_property") 
+    f.tax = c("tax_total", "tax_land", "tax_property")
 
     f.tax.cat = c("tax_delinquency", "tax_delinquency_year") # Only ~ 2% of the rows are delinquient
 
@@ -47,25 +47,25 @@ getFeatures = function() {
     f.transactions = c("date")
 
     # Excluded properties, due to reasons of redundancy
-    f.amenities.exc = c('pooltypeid2' ,'pooltypeid7', # excluded because these sum to poolcnt which is used instead  
-        'num_bathroom_calc', 'num_bath', # Highly correlated features with num_bathroom. 
+    f.amenities.exc = c('pooltypeid2' ,'pooltypeid7', # excluded because these sum to poolcnt which is used instead
+        'num_bathroom_calc', 'num_bath', # Highly correlated features with num_bathroom.
         'flag_tub', "flag_fireplace")
     f.area.exc = c('area_live_finished')
     f.census.exc = c('fips', 'rawcensustractandblock', 'censustractandblock') # Census properties not used yet
     f.tax.exclude = c("tax_building", "tax_year") # this is 2015 for the current tarsactions.
     f.building.exclude = c("story") # this is redundant as documented in the Captains log, to the area_basement
-		     
+
     sparse_props = c(f.area.sparse, f.amenities.sparse, f.building.sparse, f.location.cat.sparse)
     # TODO: Move me to a separate function
-    selected_props = (c(f.amenities, 
-	    f.location, f.location.cat, 
+    selected_props = (c(f.amenities,
+	    f.location, f.location.cat,
 	    f.zoning.cat,
 	    f.building,
 	    f.tax, f.tax.cat,
-	    f.area, 
+	    f.area,
 	    f.transactions))
     excluded_prop = c(f.amenities.exc, f.area.exc, f.census.exc, f.tax.exclude,f.building.exclude)
-    return(list("chosen"=selected_props, "sparse"=sparse_props, "excluded"=excluded_prop)) 
+    return(list("chosen"=selected_props, "sparse"=sparse_props, "excluded"=excluded_prop))
 
 }
 
@@ -76,7 +76,7 @@ discretizetime.month = function(data, time.feature.name=date, time.feature.name.
 }
 
 transformFeaturesForLinearRegression = function(
-        data, 
+        data,
         txn.features =c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property")) {
     # TODO: parameterize the features we want to transform as well
     # If the transformed features are in the chosen_features then they must be in the data, else error
@@ -94,11 +94,11 @@ transformFeaturesForLinearRegression = function(
     #    column = enquo(colname)
     #    if(column %in% chosen_features) {
     #        if(column %in% colnames(x)){
-    #    	return(x %<>% mutation.fn.instance(colname, new.name))
+    #	return(x %<>% mutation.fn.instance(colname, new.name))
     #        } else {
     #            stopifnot(TRUE) # If I chose the feature to be transformed it must be in the data.
     #        }
-    #    } 
+    #    }
     #    print(paste("* Skipping column", quo_name(column)))
     #    return(x)
     #}
@@ -107,25 +107,25 @@ transformFeaturesForLinearRegression = function(
     #mutation.fn = function(x, colname, new.name){
     #        new.column = enquo(new.name)
     #        column = enquo(colname)
-    #        x %<>% dplyr::mutate(!!new.column := log10(!!column))  %>% 
+    #        x %<>% dplyr::mutate(!!new.column := log10(!!column))  %>%
     #            dplyr::select(!!column)
     #}
-    
+
     for(f in txn.features) {
         data %<>%
             mutate(!!f := log(!!quo(!!as.name(f))))
     }
     #XY = data %>%
-    #	mutate.ifcolexists(area_lot, log_area_lot, mutation.fn) %>% 
-    #	mutate.ifcolexists(area_total_calc, log_area_total_calc, mutation.fn) %>% 
-    #	mutate.ifcolexists(tax_total,log_tax_total, mutation.fn) %>% 
-    #	mutate.ifcolexists(tax_land, log_tax_land, mutation.fn.create) %>% 
-    #	mutate.ifcolexists(tax_property, log_tax_property, mutation.fn.create) 
+    #	mutate.ifcolexists(area_lot, log_area_lot, mutation.fn) %>%
+    #	mutate.ifcolexists(area_total_calc, log_area_total_calc, mutation.fn) %>%
+    #	mutate.ifcolexists(tax_total,log_tax_total, mutation.fn) %>%
+    #	mutate.ifcolexists(tax_land, log_tax_land, mutation.fn.create) %>%
+    #	mutate.ifcolexists(tax_property, log_tax_property, mutation.fn.create)
 
     #chosen_features.ext = c(colnames(data), setdiff(colnames(XY), colnames(data)))
     #assertthat::assert_that(len(chosen_features.ext) > len(chosen_features))
 
-    #Select the features you want 
+    #Select the features you want
     # XY %<>% dplyr::select_(.dots=chosen_features.ext)
     return(data)
 }
@@ -136,16 +136,16 @@ makeNonNAConjunctionExpr = function(predictors) {
     # Found a much better way of doing this:
     # https://stackoverflow.com/questions/46146948/r-create-conjunction-of-expressions-from-column-list
     f = function(init, i) {
-        i_name = as.name(i); 
+        i_name = as.name(i);
         if(is.null(init) || length(init) == 0) {
-            return(expr(!is.na(!!i_name))) 
+            return(expr(!is.na(!!i_name)))
         }
         init = if(is_call(init)) {
                     init
                 } else {
                     expr(!is.na(!!as.name(init)))
                 }
-        e = expr(!!init & !is.na(!!i_name)); 
+        e = expr(!!init & !is.na(!!i_name));
         return(e)
     }
     e = Reduce(f, predictors[-1], predictors[1])
@@ -156,28 +156,28 @@ impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
     xcol.name.new.enquo = enquo(xcol.name.new)
     depvar.name.enquo = enquo(depvar.name)
     xcol.name.enquo = enquo(xcol.name)
-    condProbModel = impactModel(data %>% pull(!!xcol.name.enquo), data %>% pull(!!depvar.name.enquo)) 
+    condProbModel = impactModel(data %>% pull(!!xcol.name.enquo), data %>% pull(!!depvar.name.enquo))
     m = applyImpactModel(condProbModel, data %>% pull(!!xcol.name.enquo))
     data %<>% dplyr::mutate(!!quo_name(xcol.name.new.enquo) := m)
 }
-# Impact coding routines: WARNING may introduce bias in the model. 
+# Impact coding routines: WARNING may introduce bias in the model.
 impactModel = function(xcol, depvar) {
     # xcol is your categorical variable and depvar is the variable that will be
-    # whose value will be 
+    # whose value will be
   n = length(depvar)
   p = sum(depvar)/n
-  # duplicate output for NA (average NA towards grand uniform average) 
+  # duplicate output for NA (average NA towards grand uniform average)
   x = c(xcol,xcol)
   y = c(depvar, depvar)
   x[(1+n):(2*n)] = NA
   levelcounts = table(x, y, useNA="always")
-  condprobmodel = (levelcounts[,2] + p)/(levelcounts[,1] + levelcounts[,2] + 1.0) 
+  condprobmodel = (levelcounts[,2] + p)/(levelcounts[,1] + levelcounts[,2] + 1.0)
   # apply model example: applyImpactModel(condprobmodel,data[,varname])
   condprobmodel
 }
 
 # apply model to column to essentially return condprobmodel[rawx]
-# both NA's and new levels are smoothed to original grand average 
+# both NA's and new levels are smoothed to original grand average
 applyImpactModel = function(condprobmodel, xcol) {
   naval = condprobmodel[is.na(names(condprobmodel))]
   dim = length(xcol)
@@ -192,14 +192,14 @@ applyImpactModel = function(condprobmodel, xcol) {
 
 # Wrappers around mkCrossFrameNExperiment and prepare that adjust rareCount, rareSig and smFactor
 createCrossFrameTreatment = function(
-        XY, 
+        XY,
         features, # Only these variables will be used for creating treatment
         #smFactor=0.01, # vary these for tuning
         #rareSig=0.01,
         #rareCount=10,
-        vtreat.grid, 
-        YName = "logerror", 
-        makeLocalCluster=F, 
+        vtreat.grid,
+        YName = "logerror",
+        makeLocalCluster=F,
         crossFrameCluster=NULL) {
     assertthat::assert_that(all(features %in% colnames(XY)))
     snow::clusterEvalQ(crossFrameCluster, ({
@@ -209,14 +209,14 @@ createCrossFrameTreatment = function(
                      library(doParallel)
                     print("**")
     }))
-    res = snow::parLapply(crossFrameCluster, apply(vtreat.grid, 1, as.list), 
+    res = snow::parLapply(crossFrameCluster, apply(vtreat.grid, 1, as.list),
             function(opts.vtreat, XY, freatures, YName, makeLocalCluster) {
                 rareCount = opts.vtreat$rareCount
                 rareSig = opts.vtreat$rareSig
                 smFactor = opts.vtreat$smFactor
-                fn = paste("cache/crossFrame", 
-                           "_smFactor_", smFactor, 
-                           "_rareSig_", rareSig, 
+                fn = paste("cache/crossFrame",
+                           "_smFactor_", smFactor,
+                           "_rareSig_", rareSig,
                            "_rareCount_", rareCount, sep="")
                 cluster = NULL
                 if(makeLocalCluster == T) {
@@ -232,9 +232,9 @@ createCrossFrameTreatment = function(
 
                 #if(!exists(fn)) {
                 prep = vtreat::mkCrossFrameNExperiment(
-                    XY, 
+                    XY,
                     features, # Only treat these variables
-                    YName, 
+                    YName,
                     rareCount=rareCount,
                     rareSig=rareSig,
                     smFactor=smFactor,
@@ -248,25 +248,25 @@ createCrossFrameTreatment = function(
                 print("*****")
                 prep$opts.vtreat=opts.vtreat
                 return(prep)
-            }, 
-            XY, 
+            },
+            XY,
             features, # Only treat these variables
-            YName, 
+            YName,
             makeLocalCluster)
     print("**** ****")
     return(res)
 }
-    
+
 
 applyCrossFrameToX = function(
-       X, prep, pruneSig=0.01, yName="logerror", isTrain=T, 
+       X, prep, pruneSig=0.01, yName="logerror", isTrain=T,
        keepDateTimeFeature=T, dateTimeColname="date") {
     # yName: only used for some assertions.
 
-    # X can only be either the training 
+    # X can only be either the training
     scoreFrame = prep$treatments$scoreFrame
     newVars <- scoreFrame$varName[scoreFrame$sig<1/nrow(scoreFrame)]
-    assertthat::assert_that(!yName %in% colnames(X)) 
+    assertthat::assert_that(!yName %in% colnames(X))
     if(keepDateTimeFeature == T) {
         dateVars = scoreFrame %>% dplyr::filter(origName==dateTimeColname) %>% dplyr::pull(varName)
         newVars = base::union(dateVars, newVars)
@@ -276,7 +276,7 @@ applyCrossFrameToX = function(
     # Add to X the prepared features and remove the features from which prepared features were created
     if(isTrain==T) {
         # Training data is combined with the cross frame
-        XTreated = cbind(X %>% dplyr::select(-dplyr::one_of(treated.features)), prep$crossFrame %>% dplyr::select(newVars)) 
+        XTreated = cbind(X %>% dplyr::select(-dplyr::one_of(treated.features)), prep$crossFrame %>% dplyr::select(newVars))
         print(dim(XTreated))
         XTreated = XTreated %>% dplyr::select(-dplyr::matches("(.*catP)|(.*catD)"))
         print(dim(XTreated))
@@ -284,7 +284,7 @@ applyCrossFrameToX = function(
         # Testing data is combined with the preparation applied to the test data set
         XTestTreated <- vtreat::prepare(prep$treatments, X,
                                       pruneSig=pruneSig,varRestriction=newVars)
-        XTreated = cbind(X %>% dplyr::select(-dplyr::one_of(treated.features)), XTestTreated) 
+        XTreated = cbind(X %>% dplyr::select(-dplyr::one_of(treated.features)), XTestTreated)
         XTreated = XTreated %>% dplyr::select(-dplyr::matches("(.*catP)|(.*catD)"))
     }
     print(paste(length(colnames(XTreated)), " variables in treated data"))
@@ -292,10 +292,10 @@ applyCrossFrameToX = function(
 }
 
 knnPerformanceComparison = function(XY, predictors, response) {
-        # fast knn handily beats the knn I use . 
-        t3 = system.time({XY = XY %>% 
-            select_at(vars(predictors, response)) %>% 
-            filter_at(vars(predictors, response), all_vars(!is.na(.))) %>% 
+        # fast knn handily beats the knn I use .
+        t3 = system.time({XY = XY %>%
+            select_at(vars(predictors, response)) %>%
+            filter_at(vars(predictors, response), all_vars(!is.na(.))) %>%
             mutate_if(is.factor, funs(as.numeric(as.character(.))))
         X = XY %>% select(predictors)
         Y = XY %>% pull(response)
@@ -315,7 +315,7 @@ knnPerformanceComparison = function(XY, predictors, response) {
         t2 <- system.time({
               ncores <- as.integer(parallel::detectCores()*0.8)
               cl <- snow::makeCluster(rep("localhost", ncores), type = "SOCK")
-              estm = smoothz(cbind(x.tr, y=y.tr), knnreg, k=10 , nchunks=20, cls=cl)  
+              estm = smoothz(cbind(x.tr, y=y.tr), knnreg, k=10 , nchunks=20, cls=cl)
               print("**")
               idx = RANN::nn2(data=x.tr, query=x.te, k=1, treetype="kd", searchtype="standard")$nn.index
               yhat2 = estm[idx]
@@ -332,14 +332,14 @@ knnPerformance = function(f.impute, X, predictors, k=50, nchunks=7) {
     # Measure the performance of KNN by splitting the data and then mes
     mkDataFrame = function(df, response) {
         print(response)
-        X.fpresent = df %>% 
-            select_at(vars(predictors, response)) %>% 
-            filter_at(vars(predictors, response), all_vars(!is.na(.))) %>% 
+        X.fpresent = df %>%
+            select_at(vars(predictors, response)) %>%
+            filter_at(vars(predictors, response), all_vars(!is.na(.))) %>%
             mutate_if(is.factor, funs(as.numeric(as.character(.))))
         # Introduce some NA's into X
-        X.model = X.fpresent %>% 
+        X.model = X.fpresent %>%
             mutate(!!response :=ifelse(rbinom(nrow(X.fpresent), 1, 0.9) == 1, !!quo(!!as.name(response)), NA))
-        assertthat::assert_that(nrow(X.model) > 0) 
+        assertthat::assert_that(nrow(X.model) > 0)
         # get the results from the imputation routine
         result = knnImputeClassify(X.model, predictors, response, k=k, nchunks=nchunks)
         # Measure RMSE against the true data set
@@ -350,7 +350,7 @@ knnPerformance = function(f.impute, X, predictors, k=50, nchunks=7) {
     lapply(X=f.impute, FUN=mkDataFrame, df=X)
 }
 
-# Call like so: 
+# Call like so:
 # list[preds.location, preds.all, var.names, methods.knn] = knn.opts()
 knn.opts = function() {
     preds.location=c('longitude','latitude')
@@ -363,15 +363,15 @@ knn.opts = function() {
 # Call knnImpute.gen.wrapper instead of knnImpute.gen directly
 knnImpute.gen.wrapper = function(
                      data,
-                     dataset.type, 
-                     k=c(5,15), 
-                     preds, 
-                     var.names, 
-                     instances, 
+                     dataset.type,
+                     k=c(5,15),
+                     preds,
+                     var.names,
+                     instances,
                      methods.knn) {
     cluster = snow::makeCluster(instances, type="SOCK")
-    data = data %>% 
-        mutate(area_lot = log10(area_lot)) %>% 
+    data = data %>%
+        mutate(area_lot = log10(area_lot)) %>%
         mutate(area_liveperi_finished=log10(area_liveperi_finished)) %>%
         mutate_if(is.factor, funs(as.numeric(as.character(.)))) %>%
         select_at(dplyr::vars(preds, var.names))
@@ -380,11 +380,11 @@ knnImpute.gen.wrapper = function(
 
 knnImpute.gen = function (
                      data,
-                     dataset.type, 
-                     k=c(5,15), 
-                     preds=c('longitude','latitude','tax_building','area_total_calc','build_year','tax_total','num_bathroom'), 
-                    var.names, 
-                    cl = NULL, 
+                     dataset.type,
+                     k=c(5,15),
+                     preds=c('longitude','latitude','tax_building','area_total_calc','build_year','tax_total','num_bathroom'),
+                    var.names,
+                    cl = NULL,
                     methods.knn =c("mahalanobis", "euclidean", "ica")) {
     the.grid = expand.grid(methods.knn=methods.knn, k=k, var.names=var.names)
 
@@ -410,7 +410,7 @@ knnImpute.gen = function (
     if(is.null(cl)) {
         cl = snow::makeSOCKcluster(c("localhost","localhost"))
     }
-    data %<>% dplyr::mutate(row_id = rownames(data))  
+    data %<>% dplyr::mutate(row_id = rownames(data))
     imputations = snow::parLapply(cl=cl, apply(the.grid, 1, as.list), knnFn, data, preds)
     for(imputation.obj in imputations) {
         predictions = yaImpute::impute(imputation.obj)
@@ -418,7 +418,7 @@ knnImpute.gen = function (
         k = imputation.obj$k
         method = imputation.obj$method
         var.name.new = paste(var.name,"_", k, "_", method, ".o", sep="")
-        # The col name in predictions df is var.name . We join that to the 
+        # The col name in predictions df is var.name . We join that to the
         # original data frame
         predictions %<>% dplyr::mutate(row_id = rownames(predictions)) %>%
             dplyr::select_at(dplyr::vars(var.name, "row_id")) %>%
@@ -446,8 +446,8 @@ knnImputeClassify = function(XY, predictors, response, k=15) {
     # The method uses complete examples from XY to learn the imputation
     # The test data is created from the examples that have missing response
     # Get the subset of indices for train and test
-        # Only get the rows that are non na. 
-    # NOTES: convert all the factors to numeric before using 
+        # Only get the rows that are non na.
+    # NOTES: convert all the factors to numeric before using
     # mutate_if(is.factor, funs(as.numeric(as.character(.))))
     if(any(mapply(function(x) {is.factor(XY %>% pull(x))}, colnames(XY)))) {
         print("*** ERROR: some features are factors, make em numeric first. Aborting")
@@ -459,44 +459,44 @@ knnImputeClassify = function(XY, predictors, response, k=15) {
     }
     XY %<>% dplyr::mutate(row_id = 1:nrow(XY))
     #e = makeNonNAConjunctionExpr(c(predictors, response))
-    train.idxs = XY %>% 
-            dplyr::filter_at(vars(c(predictors, response)), all_vars(!is.na(.))) %>% 
-            dplyr::pull(row_id) 
+    train.idxs = XY %>%
+            dplyr::filter_at(vars(c(predictors, response)), all_vars(!is.na(.))) %>%
+            dplyr::pull(row_id)
     if(length(train.idxs) == 0) {
-        print(paste("Cannot impute for",  quo_name(response), " because predictor value are missing aborting")) 
+        print(paste("Cannot impute for",  quo_name(response), " because predictor value are missing aborting"))
         return(NULL) # We must have some train data to impute
     }
 
-    test.idxs = XY %>% 
-        dplyr::filter_at(vars(response), all_vars(is.na(.))) %>% 
-        dplyr::filter_at(vars(predictors), all_vars(!is.na(.))) %>% 
-        dplyr::pull(row_id) 
-    
+    test.idxs = XY %>%
+        dplyr::filter_at(vars(response), all_vars(is.na(.))) %>%
+        dplyr::filter_at(vars(predictors), all_vars(!is.na(.))) %>%
+        dplyr::pull(row_id)
+
     if (length(test.idxs) == 0) {
-        print(paste("Nothing to impute for variable:",  response, " aborting.")) 
+        print(paste("Nothing to impute for variable:",  response, " aborting."))
         return(NULL)
     }
 
     print(paste("Imputing", length(test.idxs), " values out of", length(test.idxs)))
-    
+
     # Train: Create a Df X with preditor and response columns
-    # Call estm = smoothz(X, knnreg, 5, nchunks=7) 
+    # Call estm = smoothz(X, knnreg, 5, nchunks=7)
     # Get the data to be imputed using just the predictors. Call this XTest
     # Call pred = smoothzpred(XTest, X[,predictors],estm)
     # Impute the data into the data frame at the indexes
     ncores <- as.integer(parallel::detectCores()*0.8)
     parallelCluster <- parallel::makeCluster(ncores)
-    X = XY %>% 
-        dplyr::filter(row_id %in% train.idxs) %>% 
+    X = XY %>%
+        dplyr::filter(row_id %in% train.idxs) %>%
         dplyr::select_at(vars(predictors, response))
 
     print(".")
     t.1 = system.time({
         estm = RANN::nn2(
-                 data=as.matrix(X), k=k, treetype="kd", searchtype="standard")  
+                 data=as.matrix(X), k=k, treetype="kd", searchtype="standard")
     })
-    #XTest = properties %>% 
-    #    dplyr::filter(row_id %in% test.idxs) %>% 
+    #XTest = properties %>%
+    #    dplyr::filter(row_id %in% test.idxs) %>%
     #    dplyr::select_at(vars(predictors))
     print(t.1)
 
@@ -510,11 +510,11 @@ knnImputeClassify = function(XY, predictors, response, k=15) {
 
 naImpute = function(properties, feature, impute_val) {
     properties %>% dplyr::mutate_at(vars(feature), funs(ifelse(is.na(.), impute_val, .)))
-} 
+}
 
 round1ImputeHelper = function(df, var_name, mutate_call) {
     # Mak a mutate_call like: interp(~ifelse(region_county==county & is.na(var), 0, var), county=2061, var=as.name("area_garage"))
-    df %<>% mutate_(.dots=setNames(mutate_call, var_name)) 
+    df %<>% mutate_(.dots=setNames(mutate_call, var_name))
     # Given a number of fields and their values we want to impute values for them
 }
 
@@ -558,7 +558,7 @@ round1Impute = function(df) {
     # tax_delinquency_year		Impute 0 for NA.
 }
 
-# TODO: impute for heating and aircon by kNN. Use the zerodist to impute as much as I can. 
+# TODO: impute for heating and aircon by kNN. Use the zerodist to impute as much as I can.
 # TODO: drop the "story" property and use the "area_basement" instead. Impute 0 where this property is missing. See the captains log for why basements are sparse in SoCAL
 # TODO: drop architectural_style if I haven't already.
 # TODO: drop material for now as I am not sure imputing is of any use.
@@ -570,5 +570,5 @@ round1Impute = function(df) {
 # TODO: poolidtype10 and hashottuborspa seem to reflect the same property but not sure which one is better. Compare these
 
 # Order of imputation: First impute the region_county and region_neighbour proprerties.
- 
+
 # NOTED: Issue with imputation using lat long in properties: 11437 rows in properties are not having longitude and latitude and region_county property.
