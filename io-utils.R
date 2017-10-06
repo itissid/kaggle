@@ -19,28 +19,16 @@ write_submission_file <- function(model, te, var_names, target_months, results_p
   return(sub_name)
 }
 
-writePredictions = function(predictions, parcelids, filename.suffix= 'generic_model_submission') {
+writePredictions = function(predictions,
+                            filename.suffix= 'generic_model_submission',
+                            expect.colnames=c("parcelid", "201610", "201611" ,"201612", "201710", "201711", "201712")) {
     # Predict on a test data set, returns the name of the file written
-    if(is.numeric(predictions)) {
-        assertthat::assert_that(length(predictions) == length(parcelids))
-        results <- data.table::data.table(parcelid=parcelids,
-                          '201610'=predictions,
-                          '201611'=predictions,
-                          '201612'=predictions,
-                          '201710'=predictions,
-                          '201711'=predictions,
-                          '201712'=predictions
-        )
-    } else if(is.data.frame(predictions)) {
-        assertthat::assert_that(nrow(predictions) == length(parcelids))
-        results <- data.table::data.table(parcelid=parcelids, predictions)
-    }
-
+    assertthat::assert_that(base::setequal(colnames(predictions) , expect.colnames))
     d = format(Sys.time(), "%Y%m%d_%H-%M-%S")
-    
+
     dated.filename = paste(d, filename.suffix, sep="_")
     file.path = paste('results/', dated.filename, '.csv.gz', sep="")
     z = gzfile(file.path)
-    write.csv(results, file=z, row.names=FALSE)
+    write.csv(predictions %>% dplyr::select_at(dplyr::vars(expect.colnames)), file=z, row.names=FALSE)
     return(file.path)
 }
