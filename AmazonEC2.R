@@ -75,12 +75,38 @@ startCluster <- function (ami,
     return(clusterSpecFromInstances(dnsNames))
 }
 
+# use aws.ec2::allocate_ip to allocate IP addresses. The routine assumes you have done that already
+assocWithEIP = function(instances_id) {
+    elastic_ips = aws.ec2::describe_ips()
+    # must be the same number
+    assertthat::are_equal(length(instances_id), length(elastic_ips))
+    res = apply(cbind(instances_id, elastic_ips), 1 , function(x) {
+              instance = x[[1]]
+              ip= x[[2]]
+              associate_ip(instance, ip)
+    })
+    return(res)
+}
+
+disassocWithEIP = function() {
+    elastic_ips = aws.ec2::describe_ips()
+    # must be the same number
+    res = mapply(function(eip) {
+                     print(paste("disassociating: ", eip$allocationId)); aws.ec2::disassociate_ip(eip)}, 
+                     elastic_ips)
+    return(res)
+}
 clusterSpecFromInstances = function(instances) {
     instances = as.character(instances)
     names(instances) = rep("host", length(instances))
     return(instances)
 }
 
+getExistingInstancesAttr = function(attribute) {
+    sapply(aws.ec2::describe_instances(), function(x) {
+        sapply(x$instancesSet, function(instance) instance[[attribute]]) 
+    })
+}
 getExistingInstancesPublicDNS = function() {
     sapply(aws.ec2::describe_instances(), function(x) {
         sapply(x$instancesSet, function(instance) instance$dnsName) 
