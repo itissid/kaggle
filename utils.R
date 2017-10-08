@@ -82,52 +82,110 @@ readAndTransformData = function() {
 recodeHelper = function(X, colname) {
     X %<>% dplyr::distinct_(.dots=colname)
     X %<>% dplyr::filter_at(vars(colname), all_vars(trimws(.) !="")) # Don't include any missing values
-    right.col.name = paste(colname, "_tmp", sep="")
     right.coded.col.name = paste(colname, "_coded", sep="")
-    colnames(X) = c(right.col.name)
+    colnames(X) = c(colname)
     X[[right.coded.col.name]] = 1:nrow(X)
     return(X)
+}
+
+# Creates a function that returns a property data set with the date column set to whats needed in the predictions
+mapping_dates.default = list("2016-10-01"= "201610", "2016-11-01" ="201611", "2016-12-01"="201612")
+second_round_mapping_dates.default = list("2016-10-01"= "201710", "2016-11-01" ="201711", "2016-12-01"="201712")
+
+propertiesDataSetPredictorsWithDateEncoding = function(
+                                       recode_list.for.date, 
+                                       mapping_dates = mapping_dates.default, 
+                                       second_round_mapping_dates = second_round_mapping_dates.default) {
+    # This is a helper function that creates a date column in the properties data set for 
+    # prediction. The value of this date column are can be anything depending on the date_coded column of the recode_list.for.date. A function is retured to
+    # that does the actual prediction. This method just sets up the mapping. The recode_list.for.date contains
+    # mapping of date to whatever value needs to be substituted for it. 
+    # three data sets are created for the three prediction columns
+
+    codes = recode_list.for.date %>% dplyr::filter(date %in% names(mapping_dates))
+    print(nrow(codes))
+    print(length(mapping_dates))
+    
+    assertthat::assert_that(nrow(codes) == length(mapping_dates))
+    mapping.dates.codes.to.predictioncols = list()
+
+    for(d in names(mapping_dates.default)) {
+        code = codes %>% filter(date == d) %>% pull(date_coded)
+        mapping.dates.codes.to.predictioncols[[as.character(code)]] = mapping_dates[[d]]
+    }
+
+    second_round_mapping.dates.codes.to.predictioncols = list("201710", "201711", "201712")
+    names(second_round_mapping.dates.codes.to.predictioncols) = names(mapping.dates.codes.to.predictioncols)
+
+    function(X, fitObj, dates.are.numeric=T) {
+
+        pred.df = data.frame(row.names=1:nrow(X))
+        for(date.coded in names(mapping.dates.codes.to.predictioncols)) { # date.coded is coded as a char date or a number depending on mapping and caller. This is becasue some algorithms don't accept chars
+           m = mapping.dates.codes.to.predictioncols[[date.coded]] # The prediction column name
+           if(dates.are.numeric== T) {
+               Xtemp = X %>% dplyr::mutate(date = as.integer(date.coded))
+           } else {
+               Xtemp = X %>% dplyr::mutate(date = as.Date(date.coded))
+           }
+           print(paste("Predicting for date: ", m))
+           predictions <- foreach::foreach(d=itertools::isplitRows(Xtemp, chunks=6),
+                                .combine=c, .packages=c("stats", "caret")) %dopar% {
+               stats::predict(fitObj, newdata=d)
+           }
+           pred.df %<>% dplyr::mutate(!!m := predictions)
+           x_bar = dplyr::coalesce(pred.df %>% dplyr::pull(m), mean(pred.df %>% dplyr::pull(m), na.rm=T))
+           pred.df %<>% dplyr::mutate(!!m := x_bar)
+        }
+        print(head(pred.df))
+        for(d in names(second_round_mapping.dates.codes.to.predictioncols)) {
+            pred.df[[second_round_mapping.dates.codes.to.predictioncols[[d]]]] = pred.df[[mapping.dates.codes.to.predictioncols[[d]]]]
+        }
+        return(pred.df)
+    }
 }
 
 recodeCharacterColumns =function(
         transactions, properties, features=c(
                    "zoning_landuse_county", "zoning_property",
-                   "flag_tub", "flag_fireplace", "tax_delinquency")) {
+                   "flag_tub", "flag_fireplace", "tax_delinquency", "date")) {
     # Deals with character values in relavent columns of the data set.
     # Assigns NA to the missing values or empty strings.
+    recode_list = list()
     for(feature in features) {
-        if(is.numeric(properties %>% dplyr::pull(feature) %>% na.omit) &
-           is.numeric(properties %>% dplyr::pull(feature) %>% na.omit) ){
+        if((feature == "date" || is.numeric(properties %>% dplyr::pull(feature) %>% na.omit)) &&
+           is.numeric(transactions %>% dplyr::pull(feature) %>% na.omit) ){
             print(paste(feature, " is already numeric, skipping"));
             next
         }
         print(paste("Recoding feature to numeric:", feature))
         # Create a data frame with numeric values per factor
-        f1 = data.frame(rbind(properties %>% dplyr::distinct_(.dots=feature),
-                transactions %>% dplyr::distinct_(.dots=feature))) %>%
+        f1 = data.frame(rbind(
+                properties %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature),
+                transactions %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature))) %>%
                 recodeHelper(feature) #distinct_(.dots=feature)
         # Now join and get rid of the old column
         # NA's will be left in place of empty strings
-
-        right.col.name = paste(feature, "_tmp", sep="")
-        right.coded.col.name = paste(colname, "_coded", sep="")
-        transactions.t  = transactions %>% dplyr::left_join(f1, by=setNames(right.col.name, feature))
-        properties.t  = properties %>% dplyr::left_join(f1, by=setNames(right.col.name, feature))
-
-        # Remove the character columns and rename the new coded columns
-        transactions.t = transactions.t[, -which(names(transactions) %in% c(feature, right.col.name))] %>%
+       recode_list[[feature]] = f1
+       right.coded.col.name = paste(feature, "_coded", sep="")
+       transactions.t = transactions %>% dplyr::left_join(f1, by=feature) %>%
+            dplyr::select(-dplyr::one_of(feature)) %>%
             dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
-        properties.t = properties.t[, -which(names(properties) %in% c(feature, right.col.name))] %>%
-            dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
+        if(feature != "date")
+            properties.t  = properties %>% dplyr::left_join(f1, by=feature) %>%
+                dplyr::select(-dplyr::one_of(feature)) %>%
+                dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
 
         assertthat::assert_that(all(dim(transactions) == dim(transactions.t)))
-        assertthat::assert_that(all(dim(properties) == dim(properties.t)))
+        if(feature != "date")
+            assertthat::assert_that(all(dim(properties) == dim(properties.t)))
         assertthat::assert_that(base::setequal(colnames(transactions),colnames(transactions.t)))
-        assertthat::assert_that(base::setequal(colnames(properties), colnames(properties.t)))
-        properties = properties.t
+        if(feature != "date")
+            assertthat::assert_that(base::setequal(colnames(properties), colnames(properties.t)))
+        if(feature != "date")
+            properties = properties.t
         transactions = transactions.t
     }
-    return(list("transactions"=transactions, "properties"=properties))
+    return(list("transactions"=transactions, "properties"=properties, "recode_list" = recode_list))
 }
 
 convertToFactors = function(transactionPropertyData, features=c(
@@ -179,7 +237,7 @@ groupBySpatialFeature = function(df, f.spatial, var_name){
     # dplyr vars() used  in the *_all, *_at, *_each functions can mix strings and names making programming easier.
     b = df %>%
         # Below call is more understandable instead of: mutate_(.dots=setNames(list(mutate_call), var_name_present)) %>%
-        dplyr::mutate(!!var_name_present := !is.na(!!var_name.enquo)) %>%
+        dplyr::mutate(!!var_name_present := is.na(!!var_name.enquo)) %>%
         select_at(dplyr::vars(!!f.spatial.enquo, var_name_present)) %>%
         group_by_at(dplyr::vars(!!f.spatial.enquo)) %>%
         # One can also do: summarize(ct = sum(!!as.name(var_name_present), na.rm=TRUE)) %>% head(50)
@@ -205,25 +263,31 @@ splitTrainingData = function(Y, split_percent=0.75) {
     inTraining <- createDataPartition(Y, p = split_percent, list = FALSE)
     return(inTraining)
 }
-splitKWayStratifiedCrossFold = function(Y, split_percent) {
-    assertthat::assert_that(split_percent < 1 & split_percent > 0)
-    k = as.integer(1/(1-split_percent))
-    print(paste("Creating a data set with ", k , " way cross validation folds"))
-    pStrat <- vtreat::kWayStratifiedY(nrow(Y),k, NULL, Y)
+
+splitKWayStratifiedCrossFoldHelper = function(Y, k)  {
+    pStrat <- vtreat::kWayStratifiedY(length(Y), k, NULL, Y)
     # check if the split is a good partition
-    check = vtreat::problemAppPlan(nrow(Y),k,pStrat,TRUE)
+    check = vtreat::problemAppPlan(length(Y),k, pStrat,TRUE)
     if(is.null(check)) {
       print("Plan is good")
     } else {
       print(paste0("Problem with plan: ", check))
       stopifnot(TRUE)
     }
+    return(pStrat)
+}
+
+splitKWayStratifiedCrossFold = function(Y, split_percent) {
+    assertthat::assert_that(split_percent < 1 & split_percent > 0)
+    k = as.integer(1/(1-split_percent))
+    pStat = splitKWayStratifiedCrossFoldHelper(Y, k)
+    print(paste("Creating a data set with ", k , " way cross validation folds"))
     return(pStrat[[1]]$train)
 }
 
 splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingData,
                                 YName="logerror") {
-    trainingIndices = splitFn(Y = XY %>% dplyr::select_at(dplyr::vars(YName)), split_percent = split_percent)
+    trainingIndices = splitFn(Y = XY %>% dplyr::pull(YName), split_percent = split_percent)
 
     XYTrain = XY[trainingIndices, ] %>% na.omit
     XYTest = XY[-trainingIndices, ] %>% na.omit
