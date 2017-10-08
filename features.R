@@ -77,7 +77,10 @@ discretizetime.month = function(data, time.feature.name=date, time.feature.name.
 
 transformFeaturesForLinearRegression = function(
         data,
-        txn.features =c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property")) {
+        txn.features =c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
+                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage", 
+                        "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
+                        "area_liveperi_finished")) {
     # TODO: parameterize the features we want to transform as well
     # If the transformed features are in the chosen_features then they must be in the data, else error
     # I use the chosen set to create the training data and the test data set. Transformation of features
@@ -87,7 +90,6 @@ transformFeaturesForLinearRegression = function(
     #}
     # Must be in among the chosen ones.
     # and must be in the data as well.
-    assertthat::assert_that(all(mapply((function(i) {i %in% chosen_features}), txn.features)))
     assertthat::assert_that(all(mapply((function(i) {i %in% colnames(data)}), txn.features)))
 
     #mutate.ifcolexists = function(x, colname, new.name, mutation.fn.instance) {
@@ -113,7 +115,8 @@ transformFeaturesForLinearRegression = function(
 
     for(f in txn.features) {
         data %<>%
-            mutate(!!f := log(!!quo(!!as.name(f))))
+            dplyr::mutate(!!f := log(!!quo(!!as.name(f)))) %>%
+            dplyr::mutate(!!f := ifelse(is.infinite(!!quo(!!as.name(f))), 0, !!quo(!!as.name(f))))
     }
     #XY = data %>%
     #	mutate.ifcolexists(area_lot, log_area_lot, mutation.fn) %>%
@@ -209,6 +212,7 @@ createCrossFrameTreatment = function(
                      library(doParallel)
                     print("**")
     }))
+    print("***")
     res = snow::parLapply(crossFrameCluster, apply(vtreat.grid, 1, as.list),
             function(opts.vtreat, XY, freatures, YName, makeLocalCluster) {
                 rareCount = opts.vtreat$rareCount
@@ -220,7 +224,7 @@ createCrossFrameTreatment = function(
                            "_rareCount_", rareCount, sep="")
                 cluster = NULL
                 if(makeLocalCluster == T) {
-                    cluster = snow::makeCluster(4, outfile="cluster.log")
+                    cluster = snow::makeCluster(as.integer(parallel::detectCores()*3/4), outfile="cluster.log")
                 }
                 print("***")
                 #print(class(XY))
@@ -238,13 +242,17 @@ createCrossFrameTreatment = function(
                     rareCount=rareCount,
                     rareSig=rareSig,
                     smFactor=smFactor,
-                    parallelCluster=cluster)
+                    parallelCluster=cluster,
+                    codeRestriction = c('lev', 'catN', 'clean', 'isBAD')
+                    )
                     #print(prep)
                     #if(!dir.exists("cache")) dir.create("cache")
                     #saveRDS(prep, fn)
                 #} else {
                 #    prep = readRDS(fn)
                 #}
+                if(makeLocalCluster == T) 
+                    snow::stopCluster(cluster)
                 print("*****")
                 prep$opts.vtreat=opts.vtreat
                 return(prep)
@@ -526,17 +534,17 @@ round1Impute = function(df) {
     }
     # TODO: consider using a "selector" to test various imputations.
     imputeRules = list(
-            area_garage=createRule(c(1286, 2061), "area_garage"),
-            area_basement=createRule(c(2061), "area_basement"),
-            deck=createRule(c(2061), "deck"),
-            flag_fireplace = createRule(c(1286), "flag_fireplace"),
-            area_patio = createRule(c(2061), "area_patio"),
-            area_pool = createRule(c(2061), "area_pool"),
-            area_shed = createRule(c(2061), "area_shed"),
-            framing = createRule(c(3101), "framing"),
-            num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
-            num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
-            num_garage = createRule(c(1286, 2061), "num_garage"),
+           # area_garage=createRule(c(1286, 2061), "area_garage"),
+           # area_basement=createRule(c(2061), "area_basement"),
+           # deck=createRule(c(2061), "deck"),
+           # flag_fireplace = createRule(c(1286), "flag_fireplace"),
+           # area_patio = createRule(c(2061), "area_patio"),
+           # area_pool = createRule(c(2061), "area_pool"),
+           # area_shed = createRule(c(2061), "area_shed"),
+           # framing = createRule(c(3101), "framing"),
+           # num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
+           # num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
+           # num_garage = createRule(c(1286, 2061), "num_garage"),
             tax_delinquency_year = createRule(c(1286, 2061, 3101), "tax_delinquency_year"),
             tax_delinquency = createRule(c(1286, 2061, 3101), "tax_delinquency")
     )
