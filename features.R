@@ -85,51 +85,19 @@ transformFeaturesForLinearRegression = function(
     # If the transformed features are in the chosen_features then they must be in the data, else error
     # I use the chosen set to create the training data and the test data set. Transformation of features
     # must also happen for a proper subset of the chosen ones only.
-    #colexists = function(colname) {
-    #    colname %in% colnames(data)
-    #}
     # Must be in among the chosen ones.
     # and must be in the data as well.
-    assertthat::assert_that(all(mapply((function(i) {i %in% colnames(data)}), txn.features)))
 
-    #mutate.ifcolexists = function(x, colname, new.name, mutation.fn.instance) {
-    #    column = enquo(colname)
-    #    if(column %in% chosen_features) {
-    #        if(column %in% colnames(x)){
-    #	return(x %<>% mutation.fn.instance(colname, new.name))
-    #        } else {
-    #            stopifnot(TRUE) # If I chose the feature to be transformed it must be in the data.
-    #        }
-    #    }
-    #    print(paste("* Skipping column", quo_name(column)))
-    #    return(x)
-    #}
-
-    ## Custom mutation fn
-    #mutation.fn = function(x, colname, new.name){
-    #        new.column = enquo(new.name)
-    #        column = enquo(colname)
-    #        x %<>% dplyr::mutate(!!new.column := log10(!!column))  %>%
-    #            dplyr::select(!!column)
-    #}
 
     for(f in txn.features) {
+        if(!f %in% colnames(data)) {
+            print(paste("** WARN: feature ",f, " requested for log transform but not in data. Skipping."))
+            next
+        }
         data %<>%
             dplyr::mutate(!!f := log(!!quo(!!as.name(f)))) %>%
             dplyr::mutate(!!f := ifelse(is.infinite(!!quo(!!as.name(f))), 0, !!quo(!!as.name(f))))
     }
-    #XY = data %>%
-    #	mutate.ifcolexists(area_lot, log_area_lot, mutation.fn) %>%
-    #	mutate.ifcolexists(area_total_calc, log_area_total_calc, mutation.fn) %>%
-    #	mutate.ifcolexists(tax_total,log_tax_total, mutation.fn) %>%
-    #	mutate.ifcolexists(tax_land, log_tax_land, mutation.fn.create) %>%
-    #	mutate.ifcolexists(tax_property, log_tax_property, mutation.fn.create)
-
-    #chosen_features.ext = c(colnames(data), setdiff(colnames(XY), colnames(data)))
-    #assertthat::assert_that(len(chosen_features.ext) > len(chosen_features))
-
-    #Select the features you want
-    # XY %<>% dplyr::select_(.dots=chosen_features.ext)
     return(data)
 }
 
@@ -534,17 +502,17 @@ round1Impute = function(df) {
     }
     # TODO: consider using a "selector" to test various imputations.
     imputeRules = list(
-           # area_garage=createRule(c(1286, 2061), "area_garage"),
-           # area_basement=createRule(c(2061), "area_basement"),
-           # deck=createRule(c(2061), "deck"),
-           # flag_fireplace = createRule(c(1286), "flag_fireplace"),
-           # area_patio = createRule(c(2061), "area_patio"),
-           # area_pool = createRule(c(2061), "area_pool"),
-           # area_shed = createRule(c(2061), "area_shed"),
-           # framing = createRule(c(3101), "framing"),
-           # num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
-           # num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
-           # num_garage = createRule(c(1286, 2061), "num_garage"),
+            area_garage=createRule(c(1286, 2061), "area_garage"),
+            area_basement=createRule(c(2061), "area_basement"),
+            deck=createRule(c(2061), "deck"),
+            flag_fireplace = createRule(c(1286), "flag_fireplace"),
+            area_patio = createRule(c(2061), "area_patio"),
+            area_pool = createRule(c(2061), "area_pool"),
+            area_shed = createRule(c(2061), "area_shed"),
+            framing = createRule(c(3101), "framing"),
+            num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
+            num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
+            num_garage = createRule(c(1286, 2061), "num_garage"),
             tax_delinquency_year = createRule(c(1286, 2061, 3101), "tax_delinquency_year"),
             tax_delinquency = createRule(c(1286, 2061, 3101), "tax_delinquency")
     )
