@@ -1,22 +1,40 @@
 library(caret)
 
-# Simplest model.
 
+getDefaultTrControl = function(allowParallel=T, summaryFunction=rmseSummary) {
+    trainControl(
+          method = "repeatedcv",
+          number = 5,
+          repeats = 2,
+          verboseIter = TRUE,
+          returnData = TRUE,
+          allowParallel = allowParallel,
+          savePredictions="final",
+          summaryFunction=summaryFunction
+        )
+}
+
+getIndexTrControl = function(
+               train.idxs.list, test.idxs.list, allowParallel=T, summaryFunction=rmseSummary) {
+    trainControl(
+        index=train.idxs.list,
+        indexOut=test.idxs.list,
+        verboseIter=T,
+        returnData=T,
+        allowParallel=allowParallel,
+        summaryFunction=summaryFunction)
+}
+
+# Simplest model.
 bestFitByGridSearch = function(
-           train, target, ncores=6, tuneGrid,
-           metric='RMSE', summaryFunction=rmseSummary) {
+           train, target, ncores=6, 
+           tuneGrid,
+           allowParallel=T,
+           metric='RMSE', summaryFunction=rmseSummary,
+           trControl= getDefaultGrid(allowParallel, summaryFunction)) {
     #require(doMC)
     #registerDoMC(cores=ncores)
 
-    trControl <- trainControl(
-      method = "repeatedcv",
-      number = 5,
-      repeats = 2,
-      verboseIter = FALSE,
-      returnData = TRUE,
-      savePredictions="final",
-      summaryFunction=summaryFunction
-    )
 
     model <- caret::train(
       x = as.matrix(train),
@@ -89,8 +107,9 @@ prepareDataWrapper.regression = function(
 }
 
 trainingAndPredictionWrapper.regression = function(
-                XY, XTest, recode_list, dates.are.numeric=T, dates.matter=T, write.predictions=T) {
-   bestFit = trainingWrapper.regression(XY)
+                XY, XTest, recode_list, dates.are.numeric=T, dates.matter=T, write.predictions=T, 
+                stratified.cv=F) {
+   bestFit = trainingWrapper.regression(XY, stratified.cv=stratified.cv)
    print(summary(bestFit))
 
    print(".")
@@ -109,34 +128,22 @@ trainingAndPredictionWrapper.regression = function(
 
 trainingWrapper.regression = function(XY,
                            params=data.frame(intercept=F),
-                           ncores=6) {
+                           ncores=6, 
+                           stratified.cv=F) {
+    if(stratified.cv == T) {
+        crossValPlan = splitKWayStratifiedCrossFoldHelper(XY %>% pull("logerror"), 10)
+        train_idxs = mapply(function(ci){ci$train}, crossValPlan)
+        test_idxs = mapply(function(ci){ci$app}, crossValPlan)
+        trControl = getIndexTrControl(train_idxs, test_idxs, T)
+    } else {
+        trControl = getDefaultTrControl()
+    }
     bestFitByGridSearch(
         train = XY %>% dplyr::select(-logerror),
         target = XY %>% dplyr::pull(logerror),
         ncores = 6,
         tuneGrid = params,
         metric ="RMSE" ,
-        summaryFunction = rmseSummary)
-}
-
-
-splitTrainingWrapper = function(XY, split_percent=0.85) {
-    trainingIndices = splitTrainingData(Y = 1:nrow(XY), split_percent = split_percent)
-    print(dim(XY))
-
-    XTrain = XY[trainingIndices, ] %>% dplyr::select(-logerror) %>% na.omit
-
-    print(dim(XTrain))
-    XTest = XY[-trainingIndices, ] %>% dplyr::select(-logerror) %>% na.omit
-
-    YTrain = XY[rownames(XTrain), ] %>% .[["logerror"]]
-    YTest = XY[rownames(XTest), ] %>% .[["logerror"]]
-    assertthat::assert_that(length(YTrain) == nrow(XTrain))
-    assertthat::assert_that(length(YTest) == nrow(XTest))
-    assertthat::assert_that(base::setequal(colnames(XTest),  colnames(XTrain)) == T)
-    assertthat::assert_that(nrow(XTrain) > 0)
-    assertthat::assert_that(length(YTrain) > 0)
-    assertthat::assert_that(nrow(XTest) > 0)
-    assertthat::assert_that(length(YTest) > 0)
-    return(list(XTrain, YTrain, XTest, YTest))
+        summaryFunction = rmseSummary,
+        trControl=trControl)
 }
