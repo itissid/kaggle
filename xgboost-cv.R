@@ -173,6 +173,7 @@ vtreat.default.grid = expand.grid(
 
 mapping_dates.default = list("2016-10-01"= "201610", "2016-11-01" ="201611", "2016-12-01"="201612")
 second_round_mapping_dates.default = list("2016-10-01"= "201710", "2016-11-01" ="201711", "2016-12-01"="201712")
+second_round_mapping_dates.default = list("2017-10-01"= "201710", "2017-11-01" ="201711", "2017-12-01"="201712")
 
 xgTrainingWrapper = function(XY,
                              features.restricted,
@@ -251,7 +252,6 @@ xgPredictWrapper = function(X, fitObj,
     parallel::stopCluster(cl)
 
     print("..P")
-    print("...P")
     predictions %<>% dplyr::mutate(parcelid=X$id_parcel)
     return(predictions)
 }
