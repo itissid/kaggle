@@ -349,6 +349,20 @@ splitTrainingData = function(Y, split_percent=0.75) {
     return(inTraining)
 }
 
+splitLast3MonthsCrossFold = function(XY, k, dates.select) {
+    rowsAfterDatebreak = XY %>%
+        dplyr::mutate(row.name = as.integer(1:nrow(XY))) %>% dplyr::filter(date %in% dates.select) %>% pull(row.name)
+
+    rowsBeforeDatebreak = XY %>%
+        dplyr::mutate(row.name = as.integer(1:nrow(XY))) %>% dplyr::filter(!date %in% dates.select) %>% pull(row.name)
+    lapply(1:k, function(k_) {
+               testRows = sample(rowsAfterDatebreak, as.integer(length(rowsAfterDatebreak)/k))
+               testRows.2 = sample(rowsBeforeDatebreak, as.integer(length(rowsBeforeDatebreak)/k))
+               list(train=c(setdiff(rowsBeforeDatebreak, testRows.2), setdiff(rowsAfterDatebreak, testRows)),
+                    app=c(testRows, testRows.2))
+           })
+}
+
 splitKWayStratifiedCrossFoldHelper = function(Y, k)  {
     pStrat <- vtreat::kWayStratifiedY(length(Y), k, NULL, Y)
     # check if the split is a good partition

@@ -27,7 +27,7 @@ getIndexTrControl = function(
 
 # Simplest model.
 bestFitByGridSearch = function(
-           train, target, ncores=6, 
+           train, target, ncores=6,
            tuneGrid,
            allowParallel=T,
            metric='RMSE', summaryFunction=rmseSummary,
@@ -107,17 +107,30 @@ prepareDataWrapper.regression = function(
 }
 
 trainingAndPredictionWrapper.regression = function(
-                XY, XTest, recode_list, dates.are.numeric=T, dates.matter=T, write.predictions=T, 
-                stratified.cv=F) {
-   bestFit = trainingWrapper.regression(XY, stratified.cv=stratified.cv)
-   print(summary(bestFit))
+                XY, XTest, recode_list, dates.are.numeric=T, dates.matter=T, write.predictions=F,
+                stratified.cv=F, folds=10, lastkdatecv=F, date.break="2016-10-01") {
+   if(lastkdatecv == T) {
+        dates.select = recode_list$date %>% dplyr::mutate(date=as.Date(date)) %>%
+            dplyr::arrange(date) %>% dplyr::filter(date >= as.Date(date.break)) %>% pull(date_coded)
+   } else {
+       dates.select=NULL
+   }
 
    print(".")
+   bestFit = trainingWrapper.regression(
+                XY,
+                dates.select,
+                stratified.cv=stratified.cv,
+                lastkdatecv=lastkdatecv,
+                folds=folds)
+
+   print(summary(bestFit))
+   print("..")
    predictions = propertiesDataSetPredictorsWithDateEncoding(
                                     XTest, bestFit, recode_list$date,
                                     dates.are.numeric = dates.are.numeric,
                                     dates.matter=dates.matter)
-    print("..")
+    print("...")
     predictions %<>% dplyr::mutate(parcelid=XTest$id_parcel)
     if(write.predictions==T) {
         print("Writing prediction")
@@ -126,16 +139,23 @@ trainingAndPredictionWrapper.regression = function(
    return(list(bestFit, predictions))
 }
 
-trainingWrapper.regression = function(XY,
-                           params=data.frame(intercept=F),
-                           ncores=6, 
-                           stratified.cv=F) {
+trainingWrapper.regression = function(
+          XY, dates.select, params=data.frame(intercept=F), ncores=6, stratified.cv=F, lastkdatecv=F,
+          folds=10) {
     if(stratified.cv == T) {
-        crossValPlan = splitKWayStratifiedCrossFoldHelper(XY %>% pull("logerror"), 10)
-        train_idxs = mapply(function(ci){ci$train}, crossValPlan)
-        test_idxs = mapply(function(ci){ci$app}, crossValPlan)
+        print("*** Using Stratified CV")
+        crossValPlan = splitKWayStratifiedCrossFoldHelper(XY %>% pull("logerror"), folds)
+        train_idxs = lapply(crossValPlan,function(ci){ci$train})
+        test_idxs = lapply(crossValPlan, function(ci){ci$app})
+        trControl = getIndexTrControl(train_idxs, test_idxs, T)
+    } else if(lastkdatecv == T) {
+        print("*** generating test folds in CV for last 3 months")
+        crossValPlan = splitLast3MonthsCrossFold(XY, folds, dates.select)
+        train_idxs = lapply(crossValPlan,function(ci){ci$train})
+        test_idxs = lapply(crossValPlan, function(ci){ci$app})
         trControl = getIndexTrControl(train_idxs, test_idxs, T)
     } else {
+        print("*** Using randomized test folds")
         trControl = getDefaultTrControl()
     }
     bestFitByGridSearch(
