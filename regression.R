@@ -57,6 +57,8 @@ rmseSummary <- function (data,
 }
 
 features.excluded.regression.default = c(
+    "tax_year",
+    "tax_delinquency",
     "area_total_calc", # causes full rank issues in LM
     "num_bathroom_calc", # caused rank issues in Lm
     "id_parcel",
@@ -69,7 +71,7 @@ features.excluded.regression.default = c(
 )
 
 features.logtransformed.regression.default = c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
-                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage", 
+                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage",
                         "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
                         "area_liveperi_finished")
 # Quite a few features here are dropped because of the large # of categories
@@ -101,7 +103,12 @@ features.treated.vtreat.regression.default = c(
     "zoning_landuse",
     "zoning_property",
     "zoning_landuse_county",
+    "quality",
+    "framing",
+    "architectural_style",
+    "num_unit",
     "build_year",
+    "date",
     "tax_delinquency_year",
     "tract_number",
     "tract_block"
@@ -119,9 +126,11 @@ prepareDataWrapper.regression = function(
                        recode_chars=T, # Char cols are converted to ints by default
                        log.transform=T,
                        remove.outliers=T,
+                       outlier.range=c(-0.4, 0.4),
                        omit.nas=T,
                        do.vtreat=F,
                        large.missing.features.prune=T,
+                       missing.feature.cutoff.frac = 0.10,
                        features.excluded=features.excluded.regression.default,
                        do.factor.conversion=F, # For LM we exclude this becasue it makes it unscalable
                        features.categorical=features.categorical.regression.default,
@@ -133,7 +142,9 @@ prepareDataWrapper.regression = function(
          recode_chars=recode_chars,
          log.transform=log.transform,
          large.missing.features.prune=large.missing.features.prune,
+         missing.feature.cutoff.frac = missing.feature.cutoff.frac,
          remove.outliers=remove.outliers,
+         outlier.range=outlier.range,
          omit.nas=omit.nas,
          do.vtreat=do.vtreat,
          vtreat.opts=vtreat.opts,
@@ -149,7 +160,7 @@ prepareDataWrapper.regression = function(
 }
 
 trainingAndPredictionWrapper.regression = function(
-                XY, XTest, recode_list, preProcessFn = function(x) {x}, 
+                XY, XTest, recode_list, preProcessFn = function(x) {x},
                 dates.are.numeric=T, dates.matter=T, write.predictions=F,
                 stratified.cv=F, folds=10, lastkdatecv=F, date.break="2016-10-01") {
    if(lastkdatecv == T) {

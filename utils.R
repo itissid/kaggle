@@ -6,10 +6,10 @@ source("https://raw.githubusercontent.com/ggrothendieck/gsubfn/master/R/list.R")
 #properties with high 75th percentile of the abs_error.
 oc_high_75 = c( 'LAGUNA BEACH' , 'NEWPORT BEACH', 'LAGUNA WOODS','SAN CLEMENTE', 'DANA POINT', "SAN JUAN CAPISTRANO","SANTA ANA",  "SEAL BEACH")
 
-readAndTransformData = function(tr='inputs/properties_2016.csv', pr = 'inputs/train_2016_v2.csv') {
+readAndTransformData = function(pr='inputs/properties_2016.csv', tr = 'inputs/train_2016_v2.csv') {
 
-    properties <- data.table::fread(tr, strip.white=T, na.strings=c(NA, ''), stringsAsFactors=F)
-    transactions <- data.table::fread(pr, strip.white=T, na.strings=c(NA, ''), stringsAsFactors=F)
+    properties <- data.table::fread(pr, strip.white=T, na.strings=c(NA, ''), stringsAsFactors=F)
+    transactions <- data.table::fread(tr, strip.white=T, na.strings=c(NA, ''), stringsAsFactors=F)
     #sample_submission <- data.table::fread('inputs/sample_submission.csv')
     properties <- properties %>% dplyr::rename(
       id_parcel = parcelid,
@@ -82,7 +82,9 @@ prepareData = function(
                        recode_chars=T,
                        log.transform=T,
                        large.missing.features.prune=T,
+                       missing.feature.cutoff.frac = 0.10,
                        remove.outliers=T,
+                       outlier.range=c(-0.4, 0.4),
                        omit.nas=F,
                        do.vtreat=F,
                        vtreat.opts,
@@ -162,12 +164,12 @@ prepareData = function(
     }
 
 
-    pruneFeatures = function(X, cutoff=0.12) {
+    pruneFeatures = function(X, missing.feature.cutoff.frac=0.12) {
         # Choose features by excluding ones that have NA > cutoff
         features = X  %>%
             summarize_all(funs(sum(is.na(.))/n())) %>%
             tidyr::gather(key="feature", value="missing_pct") %>% arrange(missing_pct) %>%
-            filter(missing_pct<cutoff) %>% pull(feature)
+            dplyr::filter(missing_pct<missing.feature.cutoff.frac) %>% pull(feature)
 
         assertthat::assert_that(length(features) > 0)
         print(paste("Using ", length(features), " features"))
@@ -176,7 +178,7 @@ prepareData = function(
 
     if(large.missing.features.prune==T) {
         transactions_cleaned %<>%
-            select(c(pruneFeatures(transactions_cleaned), "logerror"))
+            select(c(pruneFeatures(transactions_cleaned, missing.feature.cutoff.frac), "logerror"))
         # features should not be excluded from properties #
     }
 
@@ -194,7 +196,7 @@ prepareData = function(
     #######################################################################
     if(remove.outliers==T) {
         transactions_cleaned = transactions_cleaned  %>%
-            dplyr::filter(logerror <=0.4 & logerror >=-0.4)
+            dplyr::filter(logerror <=outlier.range[2] & logerror >=outlier.range[1])
     }
 
     if(omit.nas == T) {
@@ -334,7 +336,7 @@ propertiesDataSetPredictorsWithDateEncoding = function(
                                     .combine=c, .packages=c("stats", "caret")) %dopar% {
                    stats::predict(fitObj, newdata=d)
                }
-
+               rm(X)
                pred.df %<>% dplyr::mutate(!!prediction.col.2016 := predictions)
                x_bar = dplyr::coalesce(
                            pred.df %>% dplyr::pull(prediction.col.2016),
@@ -342,6 +344,8 @@ propertiesDataSetPredictorsWithDateEncoding = function(
                pred.df %<>% dplyr::mutate(!!prediction.col.2016 := x_bar)
                pred.df %<>% dplyr::mutate(!!prediction.col.2017 := x_bar)
                assign("pred.df", pred.df, envir=parent.frame(2))
+               rm(predictions)
+               gc()
       }, fitObj)
     return(pred.df)
 }
@@ -526,7 +530,7 @@ splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingDat
     assertthat::assert_that(length(YTest) > 0)
     return(list(XTrain, YTrain, XTest, YTest))
 }
-
+# May be redundant to the regression-vtreat branch code
 trainingVtreatWrapper = function(
            XY,
            features.restricted,
