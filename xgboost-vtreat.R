@@ -32,11 +32,11 @@ features.excluded = c(
 "tax_year"
 )
 
-xgBoostVtreatPredictionWrapper = function(X, fitObj, recode_list.for.date, tplan, features.vtreat.restricted) {
+xgBoostVtreatPredictionWrapper = function(XTest, fitObj, recode_list.for.date, tplan, features.vtreat.restricted) {
 
     print(".")
     testVtreat <- vtreat::prepare(
-        tplan[[1]]$treatments, X,
+        tplan[[1]]$treatments, XTest,
         varRestriction = features.vtreat.restricted, ############# VARIABLES PRUNED BY SIG. IN THE CROSS FRAME ########
         pruneSig=0.01)
     cl <- parallel::makeCluster(as.integer(parallel::detectCores()*3/4), outfile="xgpredict.log")
@@ -49,26 +49,26 @@ xgBoostVtreatPredictionWrapper = function(X, fitObj, recode_list.for.date, tplan
     doParallel::stopImplicitCluster()
     parallel::stopCluster(cl)
     print("...")
-    predictions %<>% dplyr::mutate(parcelid=X$id_parcel)
+    predictions %<>% dplyr::mutate(parcelid=XTest$id_parcel)
     return(predictions)
 
 }
 
-xgBoostVtreatTrainWrapper = function(X, cluster.spec.massive, scale.features=T) {
+xgBoostVtreatTrainWrapper = function(XY, cluster.spec.massive, scale.features=T) {
     # Allows for unrolling return args https://stackoverflow.com/questions/1826519/how-to-assign-from-a-function-which-returns-more-than-one-value
 
     ########### Create the cross frame ##########
 
     tplan <- createCrossFrameTreatment(
-        X,
-        features=setdiff(colnames(X), "logerror"),
+        XY,
+        features=setdiff(colnames(XY), "logerror"),
         vtreat.grid=data.frame(smFactor = 0.01, rareCount = 50, rareSig = 0.01),
         makeLocalCluster=T,
         crossFrameCluster=snow::makeCluster(1))
     print("...")
     ########### Create  cross validation folds using startified k fold #######
 
-    crossValPlan = splitKWayStratifiedCrossFoldHelper(X %>% pull("logerror"),10)
+    crossValPlan = splitKWayStratifiedCrossFoldHelper(XY %>% pull("logerror"),10)
     train_idxs = mapply(function(ci){ci$train}, crossValPlan)
     test_idxs = mapply(function(ci){ci$app}, crossValPlan)
     trControl = getIndexTrControl(train_idxs, test_idxs, T)
@@ -91,7 +91,7 @@ xgBoostVtreatTrainWrapper = function(X, cluster.spec.massive, scale.features=T) 
 
     trainVtreat <- vtreat::prepare(
         tplan[[1]]$treatments,
-        X, ############# TAKE CARE OF THE DATA SET NAME ###########
+        XY, ############# TAKE CARE OF THE DATA SET NAME ###########
         varRestriction = features.vtreat.restricted, ############# VARIABLES PRUNED BY SIG. IN THE CROSS FRAME ########
         pruneSig=0.01,
         scale=scale.features)

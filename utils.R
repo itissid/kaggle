@@ -84,7 +84,12 @@ prepareData = function(
                        large.missing.features.prune=T,
                        remove.outliers=T,
                        omit.nas=F,
+                       do.vtreat=F,
+                       vtreat.opts,
                        features.excluded,
+                       features.logtransformed,
+                       features.vtreat.treated, # WITH vtreat
+                       do.factor.conversion,
                        features.categorical
                        ) {
 
@@ -107,15 +112,55 @@ prepareData = function(
     transactions_cleaned = transactions.enc %>% round1Impute()
     properties_cleaned = properties.enc %>% round1Impute()
 
-    if(length(features.excluded) >0) {
-        transactions_cleaned %<>% dplyr::select(-dplyr::one_of(features.excluded))
-        # properties_cleaned %<>% dplyr::select(-dplyr::one_of(features.excluded))
-    }
-
-    if(length(features.categorical) >0) {
+    if(do.factor.conversion == T && length(features.categorical) > 0) { # May often be excluded from lm due to data set size.
         transactions_cleaned %<>% dplyr::mutate_at(dplyr::vars(features.categorical), as.factor)
         properties_cleaned %<>% dplyr::mutate_at(dplyr::vars(setdiff(features.categorical, "date")), as.factor)
+    } else {
+        print("** Not converting any features to factors. do.factor.conversion is set to false or no
+              categorical features specified")
     }
+    #########################################################################
+    ############### GET THE TREATMENTS BEFORE YOU DO ANYTHING ELSE ##########
+    #########################################################################
+    if(do.vtreat==T) {
+        if(log.transform == T) {
+            shouldnotbehappening = intersect(features.logtransformed, features.vtreat.treated)
+            if(length(shouldnotbehappening) > 0) {
+                print(paste("features that are treated cannot be log transformed",
+                            paste(shouldnotbehappening, sep=", ")))
+            }
+        }
+        list[tplan, trainVtreat, testVtreatFn] = prepareDataFeaturesWithVtreat(transactions_cleaned, features.vtreat.treated, vtreat.opts)
+        print("..")
+
+        train.features.excluded = union(features.excluded, features.vtreat.treated)
+        test.features.excluded = features.excluded
+        # add all the features that are treated already to the exclusion thingy
+        print(paste("***", length(features.vtreat.treated), "features are additionally excluded from preprocessing due to vtreat treatment: ",
+                    paste(features.vtreat.treated, collapse=", ")))
+    }
+
+    #######################################################################
+    ######### Scale the variables that are orders of magnitude larger. ################
+    #########################################################################
+    if(log.transform == T) {
+        transactions_cleaned = transactions_cleaned  %>% transformFeaturesForLinearRegression(features.logtransformed)
+        print("")
+        properties_cleaned = properties_cleaned %>% transformFeaturesForLinearRegression(features.logtransformed)
+    }
+
+    #######################################################################
+    #################### NOW WE DO ALL THE FEATURE PRUNING ###################
+    #######################################################################
+    if(length(train.features.excluded) >0) {
+        transactions_cleaned %<>% dplyr::select(-dplyr::one_of(train.features.excluded))
+    }
+
+    if(length(test.features.excluded) > 0) {
+        # Don't remove the vtreat features. the treatment is not applied to the data set until the end
+        properties_cleaned %<>% dplyr::select(-dplyr::one_of(setdiff(test.features.excluded, "id_parcel")))
+    }
+
 
     pruneFeatures = function(X, cutoff=0.12) {
         # Choose features by excluding ones that have NA > cutoff
@@ -132,33 +177,107 @@ prepareData = function(
     if(large.missing.features.prune==T) {
         transactions_cleaned %<>%
             select(c(pruneFeatures(transactions_cleaned), "logerror"))
-        properties_cleaned %<>%
-            select(setdiff(c(colnames(transactions_cleaned), "id_parcel"), c("logerror", "date")))
+        # features should not be excluded from properties #
     }
 
     print(colnames(properties_cleaned))
 
 
-    #Scale the variables that are orders of magnitude larger.
-    if(log.transform == T) {
-        transactions_cleaned = transactions_cleaned  %>% transformFeaturesForLinearRegression()
-        print("")
-        properties_cleaned = properties_cleaned %>% transformFeaturesForLinearRegression()
-    }
-
     assertthat::assert_that(nrow(transactions_cleaned) == nrow(transactions))
-
+    # JUST BEFORE YOU START LOPPING OFF ROWS JOIN THE TREATMENT AND THE ORIGINAL DATA FRAME
+    if(do.vtreat == T) {
+        assertthat::assert_that(nrow(trainVtreat) == nrow(transactions_cleaned))
+        transactions_cleaned = cbind(trainVtreat %>% select(-logerror), transactions_cleaned)
+    }
+    #######################################################################
+    #################### REMOVE OUTLIERS AND NAs ###########################
+    #######################################################################
     if(remove.outliers==T) {
         transactions_cleaned = transactions_cleaned  %>%
             dplyr::filter(logerror <=0.4 & logerror >=-0.4)
     }
-    assertthat::assert_that(nrow(properties_cleaned) == nrow(properties))
+
     if(omit.nas == T) {
         transactions_cleaned %<>% na.omit
-        # properties_cleaned %<>% na.omit # The properties are needed
+        # properties_cleaned %<>% na.omit # The properties are needed for prediction even if its NA
     }
+    assertthat::assert_that(nrow(properties_cleaned) == nrow(properties))
     print("..")
-    return(list(transactions_cleaned, properties_cleaned, recode_list))
+    return(list(transactions_cleaned, properties_cleaned, recode_list, testVtreatFn, tplan))
+}
+
+prepareDataFeaturesWithVtreat = function(XY, treated.features, vtreat.opts) {
+    # USE CAREFULLY: Especially when placing it among other preprocessing routines. A good example is
+    # using it in prepareData above, you want to place it BEFORE you call pruneFeatures.
+    # This routines returns a treatment plan for treated.fetaures. A good use case is high cardinality
+    # variables like city/zipcodes.
+    # For regression use like
+    # 0. Recode all variables that are chars
+    # 1. Prepare Treatments on a subset of features
+    # 2. logtransform features. make sure no treated vars are log transformed
+    # 3. prune features that have a lot of missing data. Again no pruned features should have been treated already
+    # 4. Apply the treatment frame to a copy of X and join then with X.
+    # ***** The set of features retained in X is colnames(X) - scroeFrame$origName  ****
+    # RETURN: a treatmentplan, train data set and function for giving test data sets
+    ###### PREPARE THE DATA SET USING VTREAT #####
+    scale.features = vtreat.opts$scale.features
+    usecached = vtreat.opts$usecached.plan
+    pruneSig = vtreat.opts$pruneSig
+    print("..P")
+    d = format(Sys.time(), "%Y%m%d")
+    fn = paste("cache/tplan", d, sep="_")
+    if(usecached==F) {  # SET ME CARE FULLY. ONLY IF YOU WANT TO DEBUG/SAVE TIME
+        tplan <- createCrossFrameTreatment(
+            XY,
+            features=treated.features, # Try paying attention to the high cardinality vars first
+            vtreat.grid=data.frame(smFactor = 0.01, rareCount = 50, rareSig = 0.02),
+            makeLocalCluster=T,
+            crossFrameCluster=snow::makeCluster(1))
+        if(!dir.exists("cache")) {
+            dir.create("cache")
+        }
+        saveRDS(tplan, fn)
+    } else if(file.exists(fn)) {
+
+         print(paste("##########################################
+             ######## option set for USING A CACHED treatment plan!!
+             ##########################################
+         "))
+         tplan = readRDS(fn)
+    } else {
+        print(paste("ERROR: Asked to use cache but cache file ", fn , "does not exist!. "))
+        stopifnot(TRUE)
+    }
+
+    assertthat::assert_that(nrow(tplan[[1]]$crossFrame) > 0)
+    vScoreFrame <- tplan[[1]]$treatments$scoreFrame
+    scoreFrame.filtered <- vScoreFrame %>% dplyr::filter(sig<=0.02)
+    features.vtreat.restricted = scoreFrame.filtered %>% dplyr::pull(varName) %>% sort
+    features.vtreat.treated = scoreFrame.filtered %>% dplyr::distinct(origName) %>% dplyr::pull(origName) %>% sort
+
+   ######## PREPARE THE TEST AND TRAIN DATA SETS WITH THE TREATMENT PLAN ######
+    trainVtreat <- vtreat::prepare (
+        tplan[[1]]$treatments,
+        XY, ############# TAKE CARE OF THE DATA SET NAME ###########
+        varRestriction = features.vtreat.restricted,
+        scale=scale.features,
+        ############# VARIABLES PRUNED BY SIG. IN THE CROSS FRAME ########
+        pruneSig=NULL)
+
+    # We return a function instead as this is what we need to use to generate the properties data sets with dates
+    testDataGenerator = function(tplan, scale.features, pruneSig) {
+        pruneSignal.test = pruneSig
+        scale.test.features = scale.features
+        function(XTest) {
+            vtreat::prepare(
+                tplan[[1]]$treatments, XTest,
+                varRestriction = features.vtreat.restricted, ############# VARIABLES PRUNED BY SIG. IN THE CROSS FRAME ########
+                scale=scale.test.features,
+                pruneSig=pruneSignal.test)
+        }
+    }
+    ############################################
+    return(list(tplan, trainVtreat, testDataGenerator(tplan, scale.features, pruneSig)))
 }
 
 recodeHelper = function(X, colname) {
@@ -177,6 +296,7 @@ second_round_mapping_dates.default = list("2016-10-01"= "201710", "2016-11-01" =
 propertiesDataSetPredictorsWithDateEncoding = function(
                                        X, fitObj,
                                        recode_list.for.date,
+                                       preProcessFn=function(x){x}, # Teh function to call after preparing X to pre process it before prediction but after adding the date column. Useful when working with vtreat
                                        mapping_dates = mapping_dates.default,
                                        second_round_mapping_dates = second_round_mapping_dates.default,
                                        dates.are.numeric=F,
@@ -194,6 +314,7 @@ propertiesDataSetPredictorsWithDateEncoding = function(
                     dplyr::inner_join(recode_list.for.date, by="date")
     assertthat::assert_that(nrow(mapping_full) == nrow(mapping_dates.df))
     pred.df = data.frame(row.names=1:nrow(X))
+
     apply(mapping_full, 1,
           function(mapping_i, fitObj) {
                date.code = mapping_i[["date_coded"]]
@@ -207,6 +328,7 @@ propertiesDataSetPredictorsWithDateEncoding = function(
                        X = X %>% dplyr::mutate(date = as.Date(date.char))
                    }
                }
+               X = cbind(X, preProcessFn(X))
                print(paste("Predicting for date: ", date.char))
                predictions = foreach::foreach(d=itertools::isplitRows(X, chunks=6),
                                     .combine=c, .packages=c("stats", "caret")) %dopar% {

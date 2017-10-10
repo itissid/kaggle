@@ -182,7 +182,7 @@ createCrossFrameTreatment = function(
     }))
     print("***")
     res = snow::parLapply(crossFrameCluster, apply(vtreat.grid, 1, as.list),
-            function(opts.vtreat, XY, freatures, YName, makeLocalCluster) {
+            function(opts.vtreat, XY, features, YName, makeLocalCluster) {
                 rareCount = opts.vtreat$rareCount
                 rareSig = opts.vtreat$rareSig
                 smFactor = opts.vtreat$smFactor
@@ -192,7 +192,7 @@ createCrossFrameTreatment = function(
                            "_rareCount_", rareCount, sep="")
                 cluster = NULL
                 if(makeLocalCluster == T) {
-                    cluster = snow::makeCluster(as.integer(parallel::detectCores()*3/4), outfile="cluster.log")
+                    cluster = snow::makeCluster(as.integer(parallel::detectCores()), outfile="cluster.log")
                 }
                 print("***")
                 #print(class(XY))
