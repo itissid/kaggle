@@ -42,10 +42,6 @@ rmseSummary <- function (data,
       out
 }
 
-####################
-# Cross-validation
-####################
-
 pretrainDiagnostics = function(train, test) {
     # Place holder for plotting various diagnostics of the test and train dataset
     plotMissing = function(dataset, type="Data") {
@@ -175,6 +171,57 @@ mapping_dates.default = list("2016-10-01"= "201610", "2016-11-01" ="201611", "20
 second_round_mapping_dates.default = list("2016-10-01"= "201710", "2016-11-01" ="201711", "2016-12-01"="201712")
 second_round_mapping_dates.default = list("2017-10-01"= "201710", "2017-11-01" ="201711", "2017-12-01"="201712")
 
+features.excluded.xg.default = c(
+    "area_total_calc", # causes full rank issues in LM
+    "num_bathroom_calc", # caused rank issues in Lm
+    "id_parcel",
+    "pooltypeid2", # Redundant to pooltype10
+    "pooltypeid7", # redundant to pooltype10
+    "censustractandblock", # redundant
+    "rawcensustractandblock", # broken into block and tract
+    "fips", # redundant
+    "census" # redundant
+)
+
+features.logtransformed.xg.default = c(
+                                               "area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
+                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage", 
+                        "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
+                        "area_liveperi_finished")
+# Quite a few features here are dropped because of the large # of categories
+# Ideally we should do multilevel regression for some of them
+features.categorical.xg.default = c(
+    "region_city",
+    "region_county",
+    "region_neighbor",
+    "region_zip",
+    "zoning_landuse",
+    "zoning_property",
+    "zoning_landuse_county",
+    "quality",
+    "framing",
+    "architectural_style",
+    "num_unit",
+    "build_year",
+    "date",
+    "tax_delinquency_year",
+    "tract_number",
+    "tract_block"
+)
+# TODO: Maybe we can use certain permutations of this to see what improves prediction
+features.treated.vtreat.xg.default = c(
+    "region_city",
+    "region_county",
+    "region_neighbor",
+    "region_zip",
+    "zoning_landuse",
+    "zoning_property",
+    "zoning_landuse_county",
+    "build_year",
+    "tax_delinquency_year",
+    "tract_number",
+    "tract_block"
+)
 xgTrainingWrapper = function(XY,
                              features.restricted,
                              features.scaled,
