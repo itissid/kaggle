@@ -135,8 +135,12 @@ features.excluded.xg.default = c(
     "censustractandblock", # redundant
     "rawcensustractandblock", # broken into block and tract
     "fips", # redundant
-    "census" # redundant
-    "area_total_calc" # 100% redundant to area_live_finished
+    "census", # redundant
+    "area_total_calc", # 100% redundant to area_live_finished
+    "zoning_landuse",
+    "zoning_property",
+    "zoning_landuse_county",
+    "date"
 )
 
 features.logtransformed.xg.default = c(
@@ -164,9 +168,6 @@ features.categorical.xg.default = c(
     "region_county",
     "region_neighbor",
     "region_zip",
-    "zoning_landuse",
-    "zoning_property",
-    "zoning_landuse_county",
     "quality",
     "framing",
     "architectural_style",
