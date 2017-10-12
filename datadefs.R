@@ -150,7 +150,9 @@ features.excluded.xg.default = c(
     "area_base",
     "area_basement",
     "area_firstfloor_finished",
-    "date"
+    "date",
+    "tract_number",
+    "tract_block"
 )
 
 features.logtransformed.xg.default = c(
@@ -173,9 +175,7 @@ features.categorical.xg.default = c(
     "architectural_style",
     "num_unit",
     "build_year",
-    "tax_delinquency_year",
-    "tract_number",
-    "tract_block"
+    "tax_delinquency_year"
 )
 
 features.treated.vtreat.xg.default = c(
