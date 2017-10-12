@@ -150,6 +150,7 @@ prepareData = function(
                        outlier.range=c(-0.4, 0.4),
                        omit.nas=F,
                        do.vtreat=F,
+                       engineer.features=F,
                        vtreat.opts,
                        features.excluded,
                        features.logtransformed,
@@ -195,6 +196,7 @@ prepareData = function(
                             paste(shouldnotbehappening, sep=", ")))
             }
         }
+
         list[tplan, trainVtreat, testVtreatFn] = prepareDataFeaturesWithVtreat(transactions_cleaned, features.vtreat.treated, vtreat.opts)
         print("..")
 
@@ -208,6 +210,15 @@ prepareData = function(
         train.features.excluded = features.excluded
         test.features.excluded = features.excluded
         tplan=NULL
+    }
+    #######################################################################
+    ######### Feature engineering before log xfrm, but after vtreat    ####
+    #######################################################################
+    if(engineer.features == T) {
+        list[transactions_cleaned, features.engineered] = engineerFeatures(transactions_cleaned)
+        list[properties_cleaned, XXX__] = engineerFeatures(properties_cleaned)
+        print("Added", length(features.engineered), " engineered features:")
+        print(paste(features.engineered, collapse=", "))
     }
 
     #######################################################################
