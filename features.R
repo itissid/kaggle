@@ -239,11 +239,8 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
     X %<>% meanBy(bys, "tax_prop_persqfeet_living")
     X %<>% meanBy(bys, "tax_prop_persqfeet_lot")
     X %<>% meanBy(bys, "tax_prop_perroom")
-    if(remove_marginal == T) {
-        # Not too sure about this. perhapse we should let feature selection drive this.
-        X %<>% select(-tax_property, -tax_total)
-    }
-    return(list(X, setdiff(colnames(X), before)))
+    proposed_removal = c("tax_property", "tax_total", "region_zip", "area_lot", "area_live_finished")
+    return(list(X, setdiff(colnames(X), before), proposed_removal))
 }
 
 # Call like so:

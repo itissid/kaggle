@@ -215,10 +215,12 @@ prepareData = function(
     ######### Feature engineering before log xfrm, but after vtreat    ####
     #######################################################################
     if(engineer.features == T) {
-        list[transactions_cleaned, features.engineered] = engineerFeatures(transactions_cleaned)
-        list[properties_cleaned, XXX__] = engineerFeatures(properties_cleaned)
+        list[transactions_cleaned, features.engineered, rm.prop] = engineerFeatures(transactions_cleaned)
+        list[properties_cleaned, XXX__, YYY__] = engineerFeatures(properties_cleaned)
         print(paste("Added", length(features.engineered), " engineered features:"))
         print(paste(features.engineered, collapse=", "))
+        test.features.excluded = c(test.features.excluded, rm.prop)
+        train.features.excluded = c(train.features.excluded, rm.prop)
     }
 
     #######################################################################
