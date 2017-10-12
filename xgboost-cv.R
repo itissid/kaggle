@@ -34,13 +34,15 @@ maeSummary <- function (data,
       names(out) <- "MAE"
       out
 }
-rmseSummary <- function (data,
-                        lev = NULL,
-                        model = NULL) {
-      out <- ModelMetrics::mse(data$obs, data$pred)
-      names(out) <- "RMSE"
-      out
-}
+#rmseSummary <- function (data,
+#                        lev = NULL,
+#                        model = NULL) {
+#      out <- ModelMetrics::mse(data$obs, data$pred)
+#      names(out) <- "RMSE"
+#      print("***???")
+#      print(out)
+#      out
+#}
 
 pretrainDiagnostics = function(train, test) {
     # Place holder for plotting various diagnostics of the test and train dataset
@@ -59,28 +61,16 @@ pretrainDiagnostics = function(train, test) {
     plotMissing(train, "testing")
 }
 
-# Run me to analyze how the tree over or under fits..
-xgbGrid.overfittingCheckGrid = expand.grid(
-    nrounds=c(500),
-    gamma=c(0.01, 0.001), # min loss reduction to split the leaf. Larger is more conservative
-    eta=c(0.01, 0.05), # Learning rate. smaller is more conservative
-    max_depth=c(3, 6), # depth of the tree. Smaller is more conservative
-    min_child_weight=c(1, 3), # Give up splitting leaf nodes when reaching this threshold. Larger is more conservative
-    colsample_bytree=c(0.5, 0.9), # Smaller is more conservative
-    subsample=c(0.5, 0.9) # of examples taken to train. Smaller prevents overfitting
+xgbTree.grid.default <- expand.grid(
+    nrounds = 800, # max # iterations
+    max_depth = 4, # max depth of the tree
+    eta = .3, # learning rate
+    gamma = 0.001, # 0.1), # the minimum loss reduction to make a partition
+    colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
+    min_child_weight = 2,
+    subsample= 0.75
 )
-
-
-#xgbgrid.default <- expand.grid(
-#    nrounds = 800, # max # iterations
-#    max_depth = 4, # max depth of the tree
-#    eta = .3, # learning rate
-#    gamma = 0.001, # 0.1), # the minimum loss reduction to make a partition
-#    colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
-#    min_child_weight = 2,
-#    subsample= 0.75
-#)
-xgbGrid.default <- expand.grid(
+xgbLinear.grid.default <- expand.grid(
     nrounds=250, # max # iterations
     #max_depth = c(4,5), # max depth of the tree
     eta = 0.037, # Learning rate
@@ -89,25 +79,21 @@ xgbGrid.default <- expand.grid(
 )
 
 
-#xgbGrid.cv <- expand.grid(
-#    nrounds = 800, # max # iterations
-#    max_depth = c(4,5), # max depth of the tree
-#    eta = .3, # Learning rate
-#    gamma = c(0, 0.01, 0.001), # 0.1), # the minimum loss reduction to make a partition
-#    colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
-#    min_child_weight = c(1, 2),
-#    subsample= c(0.75,1)
-#)
+xgbTree.grid.cv <- expand.grid(
+    nrounds = 800, # max # iterations
+    max_depth = c(4,5), # max depth of the tree
+    eta = .3, # Learning rate
+    gamma = c(0, 0.01, 0.001), # 0.1), # the minimum loss reduction to make a partition
+    colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
+    min_child_weight = c(1, 2),
+    subsample= c(0.75,1)
+)
 
-xgbGrid.cv <- expand.grid(
+xgbLinear.grid..cv <- expand.grid(
     nrounds = c(100, 200, 300), # max # iterations
-    #max_depth = c(4,5), # max depth of the tree
     eta = c(0.01, 0.05, 0.1, 0.2), # Learning rate
     alpha=c(0.1, 0.4),
     lambda=c(0.1, 0.5, 0.8)
-    #gamma = c(0, 0.01, 0.001), # 0.1), # the minimum loss reduction to make a partition
-    #colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
-    #min_child_weight = c(1, 2),
 )
 s= "
 Workflow:
@@ -151,11 +137,10 @@ getIndexTrControl.xg = function(
 # using the cluster.spec and use.snow options
 bestFit.xg = function(
            train, target, ncores=6,
-           tuneGrid=xgbGrid.default,
+           tuneGrid=xgbTree.grid.default,
            metric='RMSE',
-           summaryFunction=rmseSummary,
            allowParallel=T,
-           trControl= getDefaultTrControl.xg(allowParallel, summaryFunction),
+           trControl= getDefaultTrControl.xg(allowParallel=allowParallel),
            cluster.spec=list(host="localhost"),
            use.snow=T) {
     require(caret)
@@ -176,17 +161,20 @@ bestFit.xg = function(
     }
     print("Using Grid: ")
     print(tuneGrid)
-    xgbTrain <- train(
+    print(paste("Using metric", metric))
+    print(trControl)
+    xgbTrain <- caret::train(
       x = as.matrix(train),
       y = target,
       metric = metric,
-      objective = "reg:linear",
+      #objective = "reg:linear",
       trControl = trControl,
       tuneGrid = tuneGrid,
       method = "xgbLinear"
     )
 
     if(allowParallel== T) {
+        print(trControl)
         if(use.snow == T ) {
             print("Stopping snow cluster for training")
             snow::stopCluster(cl)
@@ -249,7 +237,7 @@ trainingAndPredictionWrapper.xg = function(
                 XY,
                 XTest,
                 recode_list,
-                params=xgbGrid.default,
+                params=xgbTree.grid.default,
                 evalMetric="RMSE",
                 summaryFunction=rmseSummary,
                 preProcessFn = function(x) {x},
@@ -308,7 +296,7 @@ trainingAndPredictionWrapper.xg = function(
 
 trainingWrapper.xg = function(XY,
             dates.select,
-            params=xgbGrid.default,
+            params=xgbTree.grid.default,
             stratified.cv=F,
             lastkdatecv=F,
             folds=10,
@@ -333,7 +321,7 @@ trainingWrapper.xg = function(XY,
             trControl = getIndexTrControl.xg(train_idxs, test_idxs, T)
         } else {
             print("*** Using randomized test folds")
-            trControl = getDefaultTrControl.xg(allowParallel=allowParallel)
+            trControl = getDefaultTrControl.xg(allowParallel=allowParallel, summaryFunction=summaryFunction)
         }
         print("..x")
 
@@ -343,7 +331,6 @@ trainingWrapper.xg = function(XY,
         ncores = 6,
         tuneGrid = params,
         metric = evalMetric ,
-        summaryFunction = summaryFunction,
         trControl=trControl,
         allowParallel=allowParallel,
         use.snow=use.snow,
