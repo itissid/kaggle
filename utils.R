@@ -217,7 +217,7 @@ prepareData = function(
     if(engineer.features == T) {
         list[transactions_cleaned, features.engineered] = engineerFeatures(transactions_cleaned)
         list[properties_cleaned, XXX__] = engineerFeatures(properties_cleaned)
-        print("Added", length(features.engineered), " engineered features:")
+        print(paste("Added", length(features.engineered), " engineered features:"))
         print(paste(features.engineered, collapse=", "))
     }
 

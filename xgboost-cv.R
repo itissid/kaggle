@@ -69,7 +69,7 @@ xgbTree.grid.default <- expand.grid(
     subsample= 0.75
 )
 xgbLinear.grid.default <- expand.grid(
-    nrounds=100, # max # iterations
+    nrounds=c(100, 150, 200), # max # iterations
     #max_depth = c(4,5), # max depth of the tree
     eta = 0.037, # Learning rate
     alpha=0.4,
@@ -104,7 +104,7 @@ getDefaultTrControl.xg = function(
               allowParallel=T,
               summaryFunction=rmseSummary,
               method="repeatedcv",
-              fold=folds
+              folds=folds
               ) {
     trainControl(
           method = method,
@@ -223,7 +223,7 @@ prepareDataWrapper.xg = function(
          outlier.range=outlier.range,
          omit.nas=omit.nas,
          do.vtreat=do.vtreat, 
-         engineer.features=enginner.features,
+         engineer.features=engineer.features,
          vtreat.opts=vtreat.opts,
          features.excluded=features.excluded,
          features.logtransformed=features.logtransformed,
