@@ -203,6 +203,11 @@ prepareData = function(
         # add all the features that are treated already to the exclusion thingy
         print(paste("***", length(features.vtreat.treated), "features are additionally excluded from preprocessing due to vtreat treatment: ",
                     paste(features.vtreat.treated, collapse=", ")))
+    } else{
+        testVtreatFn = function(x){x}
+        train.features.excluded = features.excluded
+        test.features.excluded = features.excluded
+        tplan=NULL
     }
 
     #######################################################################
@@ -235,24 +240,22 @@ prepareData = function(
             dplyr::filter(missing_pct<missing.feature.cutoff.frac) %>% pull(feature)
 
         assertthat::assert_that(length(features) > 0)
-        print(paste("Using ", length(features), " features"))
         return(features)
     }
 
     if(large.missing.features.prune==T) {
         transactions_cleaned %<>%
-            select(c(pruneFeatures(transactions_cleaned, missing.feature.cutoff.frac), "logerror"))
+            dplyr::select(c(pruneFeatures(transactions_cleaned, missing.feature.cutoff.frac), "logerror"))
         # features should not be excluded from properties #
     }
 
-    print(colnames(properties_cleaned))
 
 
     assertthat::assert_that(nrow(transactions_cleaned) == nrow(transactions))
     # JUST BEFORE YOU START LOPPING OFF ROWS JOIN THE TREATMENT AND THE ORIGINAL DATA FRAME
     if(do.vtreat == T) {
         assertthat::assert_that(nrow(trainVtreat) == nrow(transactions_cleaned))
-        transactions_cleaned = cbind(trainVtreat %>% select(-logerror), transactions_cleaned)
+        transactions_cleaned = cbind(trainVtreat %>% dplyr::select(-logerror), transactions_cleaned)
     }
     #######################################################################
     #################### REMOVE OUTLIERS AND NAs ###########################
@@ -267,6 +270,8 @@ prepareData = function(
         # properties_cleaned %<>% na.omit # The properties are needed for prediction even if its NA
     }
     assertthat::assert_that(nrow(properties_cleaned) == nrow(properties))
+    print(paste("Using ", length(colnames(transactions_cleaned)) , " features in transactions:"))
+    print(colnames(transactions_cleaned))
     print("..")
     return(list(transactions_cleaned, properties_cleaned, recode_list, testVtreatFn, tplan))
 }
@@ -355,8 +360,6 @@ recodeHelper = function(X, colname) {
 }
 
 # Creates a function that returns a property data set with the date column set to whats needed in the predictions
-mapping_dates.default = list("2016-10-01"= "201610", "2016-11-01" ="201611", "2016-12-01"="201612")
-second_round_mapping_dates.default = list("2016-10-01"= "201710", "2016-11-01" ="201711", "2016-12-01"="201712")
 
 propertiesDataSetPredictorsWithDateEncoding = function(
                                        X, fitObj,
@@ -371,15 +374,17 @@ propertiesDataSetPredictorsWithDateEncoding = function(
     # that does the actual prediction. This method just sets up the mapping. The recode_list.for.date contains
     # mapping of date to whatever value needs to be substituted for it.
     # three data sets are created for the three prediction columns
-    mapping_dates.df = stack(mapping_dates)
+    mapping_dates.df = utils::stack(mapping_dates)
     colnames(mapping_dates.df) = c("prediction.col.2016", "date")
-    second_round_mapping.df = stack(second_round_mapping_dates)
+    second_round_mapping.df = utils::stack(second_round_mapping_dates)
     colnames(second_round_mapping.df) = c("prediction.col.2017", "date")
     mapping_full = dplyr::inner_join(mapping_dates.df, second_round_mapping.df, by="date") %>%
                     dplyr::inner_join(recode_list.for.date, by="date")
+    print(mapping_full)
+    print(mapping_dates.df)
     assertthat::assert_that(nrow(mapping_full) == nrow(mapping_dates.df))
     pred.df = data.frame(row.names=1:nrow(X))
-
+    #
     apply(mapping_full, 1,
           function(mapping_i, fitObj) {
                date.code = mapping_i[["date_coded"]]
@@ -394,16 +399,24 @@ propertiesDataSetPredictorsWithDateEncoding = function(
                    }
                }
                X = cbind(X, preProcessFn(X))
+               print(class(X))
                print(paste("Predicting for date: ", date.char))
-               predictions = foreach::foreach(d=itertools::isplitRows(X, chunks=6),
-                                    .combine=c, .packages=c("stats", "caret")) %dopar% {
-                   stats::predict(fitObj, newdata=d)
+               print(".P")
+               if(dates.matter == T) {
+                   predictions = foreach::foreach(
+                              d=itertools::isplitRows(X, chunks=6),
+                              .combine=c,
+                              .packages=c("stats", "caret")) %dopar% {
+                       stats::predict(fitObj, newdata=d)
+                   }
+               } else {
+                   predictions = perd.df[, ncol(pred.df)] # previous column
                }
+               print("..P")
                rm(X)
                pred.df %<>% dplyr::mutate(!!prediction.col.2016 := predictions)
                x_bar = dplyr::coalesce(
-                           pred.df %>% dplyr::pull(prediction.col.2016),
-                           mean(pred.df %>% dplyr::pull(prediction.col.2016), na.rm=T))
+                           predictions, mean(predictions, na.rm=T))
                pred.df %<>% dplyr::mutate(!!prediction.col.2016 := x_bar)
                pred.df %<>% dplyr::mutate(!!prediction.col.2017 := x_bar)
                assign("pred.df", pred.df, envir=parent.frame(2))
@@ -461,6 +474,7 @@ recodeCharacterColumns =function(
     }
     return(list("transactions"=transactions, "properties"=properties, "recode_list" = recode_list))
 }
+
 
 convertToFactors = function(transactionPropertyData, features=c(
                                 "region_city", "region_neighbor", "region_zip", "region_county",
@@ -645,7 +659,6 @@ trainingVtreatWrapper = function(
     print(".")
     snow::parLapply(crossFrameCluster, prepFrames, function(prep, applyCrossFrameToX, gridSearchFn, parallelTraining) {
         #set.seed(123456)
-        library(magrittr)
 
         options.vtreat = prep$opts.vtreat
         XTrainTreated = applyCrossFrameToX(XTrain, prep, pruneSig=options.vtreat$pruneSig, isTrain=T, yName=YName)
@@ -717,8 +730,6 @@ propertiesToSpatial =  function(sample_properties, proj4String) {
 }
 
 ######### GIS data munging related, like getting shape files, transforming them etc #############
-library(zipcode)
-data(zipcode)
 
 # For shape files that contain zip codes but not city names
 joinZipToName = function(fortifiedShapeDf, zipcode_key_name) {

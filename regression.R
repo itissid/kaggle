@@ -26,7 +26,7 @@ getIndexTrControl = function(
 }
 
 # Simplest model.
-bestFitByGridSearch = function(
+bestFit.regression = function(
            train, target, ncores=6,
            tuneGrid,
            allowParallel=T,
@@ -56,63 +56,6 @@ rmseSummary <- function (data,
       out
 }
 
-features.excluded.regression.default = c(
-    "tax_year",
-    "tax_delinquency",
-    "area_total_calc", # causes full rank issues in LM
-    "num_bathroom_calc", # caused rank issues in Lm
-    "id_parcel",
-    "pooltypeid2", # Redundant to pooltype10
-    "pooltypeid7", # redundant to pooltype10
-    "censustractandblock", # redundant
-    "rawcensustractandblock", # broken into block and tract
-    "fips", # redundant
-    "census" # redundant
-)
-
-features.logtransformed.regression.default = c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
-                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage",
-                        "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
-                        "area_liveperi_finished")
-# Quite a few features here are dropped because of the large # of categories
-# Ideally we should do multilevel regression for some of them
-features.categorical.regression.default = c(
-    "region_city",
-    "region_county",
-    "region_neighbor",
-    "region_zip",
-    "zoning_landuse",
-    "zoning_property",
-    "zoning_landuse_county",
-    "quality",
-    "framing",
-    "architectural_style",
-    "num_unit",
-    "build_year",
-    "date",
-    "tax_delinquency_year",
-    "tract_number",
-    "tract_block"
-)
-# TODO: Maybe we can use certain permutations of this to see what improves prediction
-features.treated.vtreat.regression.default = c(
-    "region_city",
-    "region_county",
-    "region_neighbor",
-    "region_zip",
-    "zoning_landuse",
-    "zoning_property",
-    "zoning_landuse_county",
-    "quality",
-    "framing",
-    "architectural_style",
-    "num_unit",
-    "build_year",
-    "date",
-    "tax_delinquency_year",
-    "tract_number",
-    "tract_block"
-)
 
 # list[trans, props, rlist] =  prepareDataWrapper.regression()
 # list[fit.lm, predictions] = trainingAndPredictionWrapper.regression(trans, props, rlist)
@@ -195,7 +138,12 @@ trainingAndPredictionWrapper.regression = function(
 }
 
 trainingWrapper.regression = function(
-          XY, dates.select, params=data.frame(intercept=F), ncores=6, stratified.cv=F, lastkdatecv=F,
+          XY,
+          dates.select,
+          params=data.frame(intercept=F),
+          ncores=6,
+          stratified.cv=F,
+          lastkdatecv=F,
           folds=10) {
     if(stratified.cv == T) {
         print("*** Using Stratified CV")
@@ -213,7 +161,7 @@ trainingWrapper.regression = function(
         print("*** Using randomized test folds")
         trControl = getDefaultTrControl()
     }
-    bestFitByGridSearch(
+    bestFit.regression(
         train = XY %>% dplyr::select(-logerror),
         target = XY %>% dplyr::pull(logerror),
         ncores = 6,

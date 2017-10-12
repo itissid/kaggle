@@ -3,9 +3,9 @@ library(xgboost)
 library(caret) # For Folds
 library(ModelMetrics)
 library(ggplot2)
-source("utils.R")
 library(foreach)
 library(itertools)
+source("datadefs.R")
 
 ###################
 # 2 function for xgboost
@@ -30,7 +30,7 @@ amo.fairobj2 <- function(preds, dtrain) {
 maeSummary <- function (data,
                         lev = NULL,
                         model = NULL) {
-      out <- mae(data$obs, data$pred)
+      out <- ModelMetrics::mae(data$obs, data$pred)
       names(out) <- "MAE"
       out
 }
@@ -70,26 +70,59 @@ xgbGrid.overfittingCheckGrid = expand.grid(
     subsample=c(0.5, 0.9) # of examples taken to train. Smaller prevents overfitting
 )
 
+
+#xgbgrid.default <- expand.grid(
+#    nrounds = 800, # max # iterations
+#    max_depth = 4, # max depth of the tree
+#    eta = .3, # learning rate
+#    gamma = 0.001, # 0.1), # the minimum loss reduction to make a partition
+#    colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
+#    min_child_weight = 2,
+#    subsample= 0.75
+#)
 xgbGrid.default <- expand.grid(
-    nrounds = c(800), # max # iterations
-    max_depth = c(4), # max depth of the tree
-    eta = c(.01, 0.03), # Learning rate
-    gamma = c(0.001), # 0.1), # the minimum loss reduction to make a partition
-    colsample_bytree = c(1), # 0.25), # ratio of columns when constructing the tree
-    min_child_weight = c(1, 2),
-    subsample= c(0.8)
+    nrounds=250, # max # iterations
+    #max_depth = c(4,5), # max depth of the tree
+    eta = 0.037, # Learning rate
+    alpha=0.4,
+    lambda=0.8
 )
 
+
+#xgbGrid.cv <- expand.grid(
+#    nrounds = 800, # max # iterations
+#    max_depth = c(4,5), # max depth of the tree
+#    eta = .3, # Learning rate
+#    gamma = c(0, 0.01, 0.001), # 0.1), # the minimum loss reduction to make a partition
+#    colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
+#    min_child_weight = c(1, 2),
+#    subsample= c(0.75,1)
+#)
+
+xgbGrid.cv <- expand.grid(
+    nrounds = c(100, 200, 300), # max # iterations
+    #max_depth = c(4,5), # max depth of the tree
+    eta = c(0.01, 0.05, 0.1, 0.2), # Learning rate
+    alpha=c(0.1, 0.4),
+    lambda=c(0.1, 0.5, 0.8)
+    #gamma = c(0, 0.01, 0.001), # 0.1), # the minimum loss reduction to make a partition
+    #colsample_bytree = 0.75, # 0.25), # ratio of columns when constructing the tree
+    #min_child_weight = c(1, 2),
+)
 s= "
 Workflow:
 0. Create training and testing data set,
 1. Create a xgbGrid using a custom grid from the getModelInfo('xgb')$parameters or just null.
 1. Use bestFitByGridSearch to figure out the best parameters.
 "
-
-getDefaultTrControl = function(allowParallel=T, summaryFunction=rmseSummary) {
+# TODO: try adaptive CV
+getDefaultTrControl.xg = function(
+              allowParallel=T,
+              summaryFunction=rmseSummary,
+              method="repeatedcv"
+              ) {
     trainControl(
-          method = "repeatedcv",
+          method = method,
           number = 5,
           repeats = 2,
           verboseIter = TRUE,
@@ -100,50 +133,62 @@ getDefaultTrControl = function(allowParallel=T, summaryFunction=rmseSummary) {
         )
 }
 
-getIndexTrControl = function(
-               train.idxs.list, test.idxs.list, allowParallel=T, summaryFunction=rmseSummary) {
+getIndexTrControl.xg = function(
+               train.idxs.list,
+               test.idxs.list,
+               allowParallel=T,
+               summaryFunction=rmseSummary) {
     trainControl(
         index=train.idxs.list,
         indexOut=test.idxs.list,
         verboseIter=T,
         returnData=T,
         allowParallel=allowParallel,
+        savePredictions="final",
         summaryFunction=summaryFunction)
 }
-
-xgBoostGridSearch = function(
+# Function borrowed from regression.R, supports additional parallelization
+# using the cluster.spec and use.snow options
+bestFit.xg = function(
            train, target, ncores=6,
            tuneGrid=xgbGrid.default,
-           metric='RMSE', summaryFunction=rmseSummary, allowParallel=T,
-           xgbTrControl=getDefaultGrid(allowParallel, summaryFunction),
-           cluster.spec=list(host="localhost"), use.snow=F) {
+           metric='RMSE',
+           summaryFunction=rmseSummary,
+           allowParallel=T,
+           trControl= getDefaultTrControl.xg(allowParallel, summaryFunction),
+           cluster.spec=list(host="localhost"),
+           use.snow=T) {
     require(caret)
     cl = NULL
+    ncores_p =  parallel::detectCores()
+    ncores_p = ifelse(is.na(ncores_p), 4, ncores_p)
     if(allowParallel== T) {
-        library(doParallel);
         print("Starting parallel cluster for training")
         if(use.snow == T ) {
-            cl <- snow::makeCluster(rep(cluster.spec, parallel::detectCores()), outfile="cluster.log");
+            print("Using snow for parallel cluster")
+            cl <- snow::makeCluster(rep(cluster.spec, ncores_p), outfile="cluster.log");
             doSNOW::registerDoSNOW(cl)
         } else {
-            cl <- parallel::makeCluster(rep(cluster.spec, parallel::detectCores()), outfile="cluster.log");
+            print("Using parallel for local cluster")
+            cl <- parallel::makeCluster(rep(cluster.spec, ncores_p), outfile="cluster.log");
             doParallel::registerDoParallel(cl)
         }
     }
-
+    print("Using Grid: ")
+    print(tuneGrid)
     xgbTrain <- train(
       x = as.matrix(train),
       y = target,
       metric = metric,
       objective = "reg:linear",
-      trControl = xgbTrControl,
+      trControl = trControl,
       tuneGrid = tuneGrid,
-      method = "xgbTree"
+      method = "xgbLinear"
     )
 
     if(allowParallel== T) {
         if(use.snow == T ) {
-            print("Stopping parallel cluster for training")
+            print("Stopping snow cluster for training")
             snow::stopCluster(cl)
             gc()
         } else {
@@ -157,246 +202,152 @@ xgBoostGridSearch = function(
     return(xgbTrain)
 }
 
-xgPredict = function(xgbModel, dtest) {
-    preds = predict(xgbModel, dtest)
-}
-
 vtreat.default.grid = expand.grid(
     list(smFactor=c(0.1, 0.01, 0.001),
          rareCount=c(10, 50),
          rareSig=c(0.01, 0.05),
          pruneSig=c(0.01, 0.05)))
-
-mapping_dates.default = list("2016-10-01"= "201610", "2016-11-01" ="201611", "2016-12-01"="201612")
-second_round_mapping_dates.default = list("2016-10-01"= "201710", "2016-11-01" ="201711", "2016-12-01"="201712")
-second_round_mapping_dates.default = list("2017-10-01"= "201710", "2017-11-01" ="201711", "2017-12-01"="201712")
-
-features.excluded.xg.default = c(
-    "area_total_calc", # causes full rank issues in LM
-    "num_bathroom_calc", # caused rank issues in Lm
-    "id_parcel",
-    "pooltypeid2", # Redundant to pooltype10
-    "pooltypeid7", # redundant to pooltype10
-    "censustractandblock", # redundant
-    "rawcensustractandblock", # broken into block and tract
-    "fips", # redundant
-    "census" # redundant
-)
-
-features.logtransformed.xg.default = c(
-                                               "area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
-                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage", 
-                        "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
-                        "area_liveperi_finished")
-# Quite a few features here are dropped because of the large # of categories
-# Ideally we should do multilevel regression for some of them
-features.categorical.xg.default = c(
-    "region_city",
-    "region_county",
-    "region_neighbor",
-    "region_zip",
-    "zoning_landuse",
-    "zoning_property",
-    "zoning_landuse_county",
-    "quality",
-    "framing",
-    "architectural_style",
-    "num_unit",
-    "build_year",
-    "date",
-    "tax_delinquency_year",
-    "tract_number",
-    "tract_block"
-)
 # TODO: Maybe we can use certain permutations of this to see what improves prediction
-features.treated.vtreat.xg.default = c(
-    "region_city",
-    "region_county",
-    "region_neighbor",
-    "region_zip",
-    "zoning_landuse",
-    "zoning_property",
-    "zoning_landuse_county",
-    "build_year",
-    "tax_delinquency_year",
-    "tract_number",
-    "tract_block"
-)
-xgTrainingWrapper = function(XY,
-                             features.restricted,
-                             features.scaled,
-                             remove_outliers=F,
-                             YName="logerror",
-                             xgBoostTrainingGrid=xgbGrid.default,
-                             splitFn=splitKWayStratifiedCrossFold,
-                             holdout.metric='RMSE',
-                             holdout.metric.fn=rmseSummary,
-                             parallelTraining=T,
-                             use.snow=T,
-                             cluster.spec=list(host="localhost"),
-                             holdoutdata.splitpercent=0.95,
-                             convertFactorsToNumerics=F
-                             ) {
-    # Pre process options:
-        # converts factors to numerics if requested
-        # remove outliers if requested
-        # limit features to features.restricted
-        # scale features listed in features.scaled
-    # Training options:
-       # splitFn for making a hold out test set that is not used for training, default is KWay stratified Cross fold
-       # holdout metric and its function, default is RMSE
-       # holdoutdata.splitpercent for % split between training and testing
-    # Parallelization Options:
-       # parallel training if requested.
-        print(".x")
-        XY %<>% select_at(dplyr::vars(c(features.restricted, YName)))  %>%
-            transformFeaturesForLinearRegression(txn.feature = features.scaled)
-        if(convertFactorsToNumerics == T)
-            XY %<>%
-                mutate_if(is.factor, funs(as.numeric(as.character(.))))
-        if(remove_outliers==T) {
-            XY %<>%
-                dplyr::filter(logerror <=0.4 & logerror >=-0.4)
+# Data preparation utility copied from regression.R.
+prepareDataWrapper.xg = function(
+                       recode_chars=T, # Char cols are converted to ints by default
+                       log.transform=T,
+                       remove.outliers=T,
+                       outlier.range=c(-0.4, 0.4),
+                       omit.nas=T,
+                       do.vtreat=F,
+                       large.missing.features.prune=T,
+                       missing.feature.cutoff.frac = 0.10,
+                       features.excluded=features.excluded.xg.default,
+                       do.factor.conversion=F, # For LM we exclude this becasue it makes it unscalable
+                       features.categorical=features.categorical.xg.default,
+                       features.logtransformed=features.logtransformed.xg.default,
+                       features.vtreat.treated=features.treated.vtreat.xg.default,
+                       vtreat.opts=list(scale.features=T, usecached.plan=F, pruneSig=NULL)) {
+    list[transactions, properties, recode_list, testVtreatFn, tplan] = prepareData(
+         recode_chars=recode_chars,
+         log.transform=log.transform,
+         large.missing.features.prune=large.missing.features.prune,
+         missing.feature.cutoff.frac = missing.feature.cutoff.frac,
+         remove.outliers=remove.outliers,
+         outlier.range=outlier.range,
+         omit.nas=omit.nas,
+         do.vtreat=do.vtreat,
+         vtreat.opts=vtreat.opts,
+         features.excluded=features.excluded,
+         features.logtransformed=features.logtransformed,
+         features.vtreat.treated=features.vtreat.treated,
+         do.factor.conversion=do.factor.conversion,
+         features.categorical=features.categorical
+         )
+
+
+    return(list(transactions, properties, recode_list, testVtreatFn, tplan))
+}
+
+trainingAndPredictionWrapper.xg = function(
+                XY,
+                XTest,
+                recode_list,
+                params=xgbGrid.default,
+                evalMetric="RMSE",
+                summaryFunction=rmseSummary,
+                preProcessFn = function(x) {x},
+                dates.are.numeric=T,
+                dates.matter=T,
+                write.predictions=F,
+                stratified.cv=F,
+                folds=10,
+                use.snow=T,
+                cluster.spec=list(host="localhost"),
+                allowParallel=T,
+                lastkdatecv=F,
+                date.break="2016-10-01") {
+    if(lastkdatecv == T) {
+         dates.select = recode_list$date %>% dplyr::mutate(date=as.Date(date)) %>%
+             dplyr::arrange(date) %>% dplyr::filter(date >= as.Date(date.break)) %>% pull(date_coded)
+    } else {
+        dates.select=NULL
+    }
+
+    print(".")
+    bestFit = trainingWrapper.xg(
+                 XY,
+                 dates.select,
+                 params=params,
+                 evalMetric=evalMetric,
+                 summaryFunction=summaryFunction,
+                 stratified.cv=stratified.cv,
+                 lastkdatecv=lastkdatecv,
+                 folds=folds,
+                 allowParallel=allowParallel,
+                 use.snow=use.snow,
+                 cluster.spec=cluster.spec)
+
+    print(summary(bestFit))
+    print("..")
+    ncores_p =   parallel::detectCores()
+    ncores_p = ifelse(is.na(ncores_p), 4, ncores_p)
+    cl <- parallel::makeCluster(rep(cluster.spec, ncores_p), outfile="xgtesting.log");
+    doParallel::registerDoParallel(cl)
+    predictions = propertiesDataSetPredictorsWithDateEncoding(
+                                    XTest, bestFit, recode_list$date,
+                                    preProcessFn=preProcessFn,
+                                    dates.are.numeric = dates.are.numeric,
+                                    dates.matter=dates.matter)
+    parallel::stopCluster(cl)
+    doParallel::stopImplicitCluster()
+    print("...")
+    predictions %<>% dplyr::mutate(parcelid=XTest$id_parcel)
+    if(write.predictions==T) {
+        print("Writing prediction")
+        writePredictions(predictions, filename.suffix="regression_submission")
+    }
+   return(list(bestFit, predictions))
+}
+
+trainingWrapper.xg = function(XY,
+            dates.select,
+            params=xgbGrid.default,
+            stratified.cv=F,
+            lastkdatecv=F,
+            folds=10,
+            evalMetric="RMSE",
+            summaryFunction=rmseSummary,
+            ncores=6,
+            allowParallel=T,
+            use.snow=T,
+            cluster.spec=list(host="localhost")
+            ) {
+        if(stratified.cv == T) {
+            print("*** Using Stratified CV")
+            crossValPlan = splitKWayStratifiedCrossFoldHelper(XY %>% pull("logerror"), folds)
+            train_idxs = lapply(crossValPlan,function(ci){ci$train})
+            test_idxs = lapply(crossValPlan, function(ci){ci$app})
+            trControl = getIndexTrControl.xg(train_idxs, test_idxs, T)
+        } else if(lastkdatecv == T) {
+            print("*** generating test folds in CV for last 3 months")
+            crossValPlan = splitLast3MonthsCrossFold(XY, folds, dates.select)
+            train_idxs = lapply(crossValPlan,function(ci){ci$train})
+            test_idxs = lapply(crossValPlan, function(ci){ci$app})
+            trControl = getIndexTrControl.xg(train_idxs, test_idxs, T)
+        } else {
+            print("*** Using randomized test folds")
+            trControl = getDefaultTrControl.xg(allowParallel=allowParallel)
         }
         print("..x")
-        list[XTrain, YTrain, XTest, YTest] = splitTrainingWrapper(
-                                                  XY, splitFn=splitFn, YName=YName,
-                                                  split_percent=holdoutdata.splitpercent)
+
+    bestFit = bestFit.xg(
+        train = XY %>% dplyr::select(-logerror),
+        target = XY %>% dplyr::pull(logerror),
+        ncores = 6,
+        tuneGrid = params,
+        metric = evalMetric ,
+        summaryFunction = summaryFunction,
+        trControl=trControl,
+        allowParallel=allowParallel,
+        use.snow=use.snow,
+        cluster.spec=cluster.spec)
         print("...x")
-        bestFit = xgBoostGridSearch(
-            train = XTrain, target = YTrain, ncores = 6, tuneGrid = xgBoostTrainingGrid,
-            metric = holdout.metric , summaryFunction = holdout.metric.fn, allowParallel=parallelTraining,
-            use.snow=use.snow,
-            cluster.spec=cluster.spec)
-        pred = predict(bestFit, XTest)
-        print("...x")
-        bestFit$holdoutPred = pred
-        bestFit$holdout.rmse = sqrt(mean((YTest - pred)^2))
-        return(bestFit)
-
-}
-
-xgPredictWrapper = function(X, fitObj,
-                            features.restricted,
-                            features.scaled,
-                            mapping=mapping_dates.default,
-                            second_round_mapping = second_round_mapping_dates.default,
-                            dates.are.numeric =T, # In case dates are converted to numeric values for the learning algo
-                            recode_list.for.date) {
-
-    X %<>%
-        dplyr::select_at(dplyr::vars(setdiff(features.restricted, "date")))  %>%
-        transformFeaturesForLinearRegression(txn.feature = features.scaled) %>%
-        dplyr::mutate_if(is.factor, dplyr::funs(as.numeric(as.character(.))))
-    print(".P")
-
-    cl <- parallel::makeCluster(as.integer(parallel::detectCores()*3/4))
-    doParallel::registerDoParallel(cl)
-    predictionsFn = propertiesDataSetPredictorsWithDateEncoding(recode_list.for.date,
-                                                              mapping, second_round_mapping)
-    predictions = predictionsFn(X, fitObj, dates.are.numeric)
-    doParallel::stopImplicitCluster()
-    parallel::stopCluster(cl)
-
-    print("..P")
-    predictions %<>% dplyr::mutate(parcelid=X$id_parcel)
-    return(predictions)
-}
-
-# Call with the cross frame the properties.
-# Returns a function which given a fit object yeilds prediction that can be written to a file
-xgPredictionOnPropertiesWithVtreat = function(crossFrame,
-                                           properties,
-                                           features.restricted,
-                                           features.scaled,
-                                           #features.treated,
-                                           addDateMonth=T) {
-    X = properties %>%
-        select_at(dplyr::vars(setdiff(features.restricted, "date")))  %>%
-        transformFeaturesForLinearRegression(txn.feature = features.scaled) %>%
-        mutate_if(is.factor, funs(as.numeric(as.character(.))))
-
-    prediction = function(bestFit) {
-        pred.df = data.frame(row.names=1:nrow(X))
-        cl <- parallel::makeCluster(as.integer(parallel::detectCores()*3/4))
-        doParallel::registerDoParallel(cl)
-        for(date in names(mapping)) {
-           m = mapping[[date]] # The prediction column name
-           Xtemp = X %>%
-                dplyr::mutate(date = as.Date(date)) %>%
-                applyCrossFrameToX(crossFrame, isTrain = F, keepDateTimeFeature=T)
-           predictions <- foreach(d=isplitRows(Xtemp, chunks=6),
-                                .combine=c, .packages=c("stats", "caret")) %dopar% {
-               stats::predict(bestFit, newdata=d)
-           }
-           pred.df %<>% dplyr::mutate(!!m := predictions)
-           x_bar = dplyr::coalesce(pred.df %>% dplyr::pull(m), mean(pred.df %>% dplyr::pull(m), na.rm=T))
-           pred.df %<>% dplyr::mutate(!!m := x_bar)
-        }
-        return(pred.df)
-    }
-    return(prediction)
-}
-
-xgTrainingWrapperWithVTreat = function(transactions,
-                                       features.restricted,
-                                       features.treated,
-                                       features.scaled,
-                                       remove_outliers=T,
-                                       discretizeDateMonth=T,
-                                       vtreat.grid=vtreat.default.grid,
-                                       YName="logerror",
-                                       xgBoostTrainingGrid=xgbGrid.default,
-                                       splitFn=splitKWayCrossFold,
-                                       holdout.metric='RMSE',
-                                       holdout.metric.fn=rmseSummary,
-                                       makeLocalCluster=F,
-                                       parallelTraining=F,
-                                       snowCluster=NULL) {
-    # xgboost with custom defaults. First it creates the cross frame using vtreat. This splits the training data
-    # into 2. The treatments are apploed to both. The boosting models are trained using different vtreat options.
-    # the boosting model itself can train over a grid if one is provided.
-    # 1. the localhost cluster parallelizes the cross frame creation based on vtreat.grid.
-    # 2. the remoteCluster is used to parallelize the computation of the boosting models themselves.
-    XY = transactions %>% select_at(dplyr::vars(c(features.restricted, YName)))  %>%
-        transformFeaturesForLinearRegression(txn.feature = features.scaled)
-    if(remove_outliers==T) {
-        XY %<>%
-            dplyr::filter(logerror <=0.4 & logerror >=-0.4)
-    }
-    if(discretizeDateMonth == T) {
-        XY %<>%
-            discretizetime.month(time.feature.name.new=date)
-    }
-    trainingVtreatWrapper(XY,
-                          features.restricted=features.restricted,
-                          features.treated=features.treated,
-                          YName=YName,
-                          keepDateCol=discretizeDateMonth,
-                          splitFn=splitFn,
-                          tuneGrid = xgBoostTrainingGrid,
-                          holdout.metric =holdout.metric,
-                          summaryFn = holdout.metric.fn,
-                          gridSearchFn = xgBoostGridSearch,
-                          vtreat.grid,
-                          makeLocalCluster=makeLocalCluster,
-                          crossFrameCluster=snowCluster,
-                          parallelTraining=parallelTraining)
-    #results = snow::parLapply(cl=snowCluster,
-    #                          apply(vtreat.grid, 1, as.list), parallelTraining,
-    #                          XY,
-    #                          features.restricted=features.restricted,
-    #                          splitFn=splitFn,
-    #                          features.treated=features.treated,
-    #                          YName=YName,
-    #                          tuneGrid = xgBoostTrainingGrid,
-    #                          holdout.metric =holdout.metric,
-    #                          summaryFn = holdout.metric.fn,
-    #                          gridSearchFn = xgBoostGridSearch,
-    #                          makeLocalCluster=F)
-    #datetime  = format(Sys.time(), "%Y%m%d_%H_%M_%S")
-    #fn = paste("results/xgboost_with_vtreat_", datetime, sep="")
-    #print(paste("saving xgboost model to ", fn), sep="")
-    #saveRDS(results, fn)
-    #return(results)
+    return(bestFit)
 }
