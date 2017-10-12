@@ -103,3 +103,84 @@ xgBoostVtreatTrainWrapper = function(XY, cluster.spec.massive, scale.features=T)
     print(".....")
     return(list(bestFit, tplan))
 }
+
+xgTrainingWrapperWithVTreat = function(transactions,
+                                       features.restricted,
+                                       features.treated,
+                                       features.scaled,
+                                       remove_outliers=T,
+                                       discretizeDateMonth=T,
+                                       vtreat.grid=vtreat.default.grid,
+                                       YName="logerror",
+                                       xgBoostTrainingGrid=xgbGrid.default,
+                                       splitFn=splitKWayCrossFold,
+                                       holdout.metric='RMSE',
+                                       holdout.metric.fn=rmseSummary,
+                                       makeLocalCluster=F,
+                                       parallelTraining=F,
+                                       snowCluster=NULL) {
+    # xgboost with custom defaults. First it creates the cross frame using vtreat. This splits the training data
+    # into 2. The treatments are apploed to both. The boosting models are trained using different vtreat options.
+    # the boosting model itself can train over a grid if one is provided.
+    # 1. the localhost cluster parallelizes the cross frame creation based on vtreat.grid.
+    # 2. the remoteCluster is used to parallelize the computation of the boosting models themselves.
+    XY = transactions %>% select_at(dplyr::vars(c(features.restricted, YName)))  %>%
+        transformFeaturesForLinearRegression(txn.feature = features.scaled)
+    if(remove_outliers==T) {
+        XY %<>%
+            dplyr::filter(logerror <=0.4 & logerror >=-0.4)
+    }
+    if(discretizeDateMonth == T) {
+        XY %<>%
+            discretizetime.month(time.feature.name.new=date)
+    }
+    trainingVtreatWrapper(XY,
+                          features.restricted=features.restricted,
+                          features.treated=features.treated,
+                          YName=YName,
+                          keepDateCol=discretizeDateMonth,
+                          splitFn=splitFn,
+                          tuneGrid = xgBoostTrainingGrid,
+                          holdout.metric =holdout.metric,
+                          summaryFn = holdout.metric.fn,
+                          gridSearchFn = xgBoostGridSearch,
+                          vtreat.grid,
+                          makeLocalCluster=makeLocalCluster,
+                          crossFrameCluster=snowCluster,
+                          parallelTraining=parallelTraining)
+}
+# Call with the cross frame the properties.
+# Returns a function which given a fit object yeilds prediction that can be written to a file
+xgPredictionOnPropertiesWithVtreat = function(crossFrame,
+                                           properties,
+                                           features.restricted,
+                                           features.scaled,
+                                           #features.treated,
+                                           addDateMonth=T) {
+    X = properties %>%
+        select_at(dplyr::vars(setdiff(features.restricted, "date")))  %>%
+        transformFeaturesForLinearRegression(txn.feature = features.scaled) %>%
+        mutate_if(is.factor, funs(as.numeric(as.character(.))))
+
+    prediction = function(bestFit) {
+        pred.df = data.frame(row.names=1:nrow(X))
+        cl <- parallel::makeCluster(as.integer(parallel::detectCores()*3/4))
+        doParallel::registerDoParallel(cl)
+        for(date in names(mapping)) {
+           m = mapping[[date]] # The prediction column name
+           Xtemp = X %>%
+                dplyr::mutate(date = as.Date(date)) %>%
+                applyCrossFrameToX(crossFrame, isTrain = F, keepDateTimeFeature=T)
+           predictions <- foreach(d=isplitRows(Xtemp, chunks=6),
+                                .combine=c, .packages=c("stats", "caret")) %dopar% {
+               stats::predict(bestFit, newdata=d)
+           }
+           pred.df %<>% dplyr::mutate(!!m := predictions)
+           x_bar = dplyr::coalesce(pred.df %>% dplyr::pull(m), mean(pred.df %>% dplyr::pull(m), na.rm=T))
+           pred.df %<>% dplyr::mutate(!!m := x_bar)
+        }
+        return(pred.df)
+    }
+    return(prediction)
+}
+

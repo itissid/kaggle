@@ -11,64 +11,6 @@ getNeighborhoodFeatures = function() {
     # TODO: modularize feature
 }
 
-getFeatures = function() {
-    # flag_tub and other pooltypeid properties were removed
-    f.amenities.sparse = c("deck", "aircon", "num_fireplace", "num_pool", "pooltypeid10", "area_pool")
-
-    f.amenities = c("flag_tub", "heating")
-    f.location = c("longitude", "latitude")
-    f.location.cat = c("region_county", "region_city", "region_zip")
-    f.location.cat.sparse = c("region_neighbor")
-
-    f.zoning.cat = c("zoning_property", "zoning_landuse", "zoning_landuse_county") # two of these are chars
-    # Building specific features
-    f.building = c("num_bathroom", "num_bedroom",  "build_year", "num_unit", "quality", "num_room")
-
-    # Following are atleast 70% missing to as much as 99%
-    f.building.sparse = c("num_garage", "num_story",  "num_75_bath","framing",  "material", "architectural_style") # largely missing...
-    f.tax = c("tax_total", "tax_land", "tax_property")
-
-    f.tax.cat = c("tax_delinquency", "tax_delinquency_year") # Only ~ 2% of the rows are delinquient
-
-    # Sparse features, some of which are missing completely at random,
-    # for example deck or pool is missing completely at random
-    # The area measurements of primenter and total_finished seem distinct from the rest of area measurements
-    f.area = c("area_total_calc", "area_lot") # area_live_finished is redundant
-    f.area.sparse = c("area_basement",
-    "area_patio",
-    "area_shed",
-    "area_pool",
-    "area_garage",
-    "area_firstfloor_finished",
-    "area_base",
-    "area_liveperi_finished",
-    "area_total_finished",
-    "area_unknown")
-    f.transactions = c("date")
-
-    # Excluded properties, due to reasons of redundancy
-    f.amenities.exc = c('pooltypeid2' ,'pooltypeid7', # excluded because these sum to poolcnt which is used instead
-        'num_bathroom_calc', 'num_bath', # Highly correlated features with num_bathroom.
-        'flag_tub', "flag_fireplace")
-    f.area.exc = c('area_live_finished')
-    f.census.exc = c('fips', 'rawcensustractandblock', 'censustractandblock') # Census properties not used yet
-    f.tax.exclude = c("tax_building", "tax_year") # this is 2015 for the current tarsactions.
-    f.building.exclude = c("story") # this is redundant as documented in the Captains log, to the area_basement
-
-    sparse_props = c(f.area.sparse, f.amenities.sparse, f.building.sparse, f.location.cat.sparse)
-    # TODO: Move me to a separate function
-    selected_props = (c(f.amenities,
-	    f.location, f.location.cat,
-	    f.zoning.cat,
-	    f.building,
-	    f.tax, f.tax.cat,
-	    f.area,
-	    f.transactions))
-    excluded_prop = c(f.amenities.exc, f.area.exc, f.census.exc, f.tax.exclude,f.building.exclude)
-    return(list("chosen"=selected_props, "sparse"=sparse_props, "excluded"=excluded_prop))
-
-}
-
 discretizetime.month = function(data, time.feature.name=date, time.feature.name.new=date) {
     o = enquo(time.feature.name)
     n = enquo(time.feature.name.new)
@@ -78,7 +20,7 @@ discretizetime.month = function(data, time.feature.name=date, time.feature.name.
 transformFeaturesForLinearRegression = function(
         data,
         txn.features =c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
-                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage", 
+                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage",
                         "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
                         "area_liveperi_finished")) {
     # TODO: parameterize the features we want to transform as well
@@ -101,28 +43,6 @@ transformFeaturesForLinearRegression = function(
     return(data)
 }
 
-makeNonNAConjunctionExpr = function(predictors) {
-    # Given a char vector c("a", "b", "c") this returns an expression:
-    # ~!is.na(a) & !is.na(b) & !is.na(c)
-    # Found a much better way of doing this:
-    # https://stackoverflow.com/questions/46146948/r-create-conjunction-of-expressions-from-column-list
-    f = function(init, i) {
-        i_name = as.name(i);
-        if(is.null(init) || length(init) == 0) {
-            return(expr(!is.na(!!i_name)))
-        }
-        init = if(is_call(init)) {
-                    init
-                } else {
-                    expr(!is.na(!!as.name(init)))
-                }
-        e = expr(!!init & !is.na(!!i_name));
-        return(e)
-    }
-    e = Reduce(f, predictors[-1], predictors[1])
-    return(quo(!!e))
-}
-
 impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
     xcol.name.new.enquo = enquo(xcol.name.new)
     depvar.name.enquo = enquo(depvar.name)
@@ -135,16 +55,16 @@ impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
 impactModel = function(xcol, depvar) {
     # xcol is your categorical variable and depvar is the variable that will be
     # whose value will be
-  n = length(depvar)
-  p = sum(depvar)/n
-  # duplicate output for NA (average NA towards grand uniform average)
-  x = c(xcol,xcol)
-  y = c(depvar, depvar)
-  x[(1+n):(2*n)] = NA
-  levelcounts = table(x, y, useNA="always")
-  condprobmodel = (levelcounts[,2] + p)/(levelcounts[,1] + levelcounts[,2] + 1.0)
-  # apply model example: applyImpactModel(condprobmodel,data[,varname])
-  condprobmodel
+    n = length(depvar)
+    p = sum(depvar)/n
+    # duplicate output for NA (average NA towards grand uniform average)
+    x = c(xcol,xcol)
+    y = c(depvar, depvar)
+    x[(1+n):(2*n)] = NA
+    levelcounts = table(x, y, useNA="always")
+    condprobmodel = (levelcounts[,2] + p)/(levelcounts[,1] + levelcounts[,2] + 1.0)
+    # apply model example: applyImpactModel(condprobmodel,data[,varname])
+    condprobmodel
 }
 
 # apply model to column to essentially return condprobmodel[rawx]
@@ -219,7 +139,7 @@ createCrossFrameTreatment = function(
                 #} else {
                 #    prep = readRDS(fn)
                 #}
-                if(makeLocalCluster == T) 
+                if(makeLocalCluster == T)
                     snow::stopCluster(cluster)
                 print("*****")
                 prep$opts.vtreat=opts.vtreat
@@ -232,7 +152,6 @@ createCrossFrameTreatment = function(
     print("**** ****")
     return(res)
 }
-
 
 applyCrossFrameToX = function(
        X, prep, pruneSig=0.01, yName="logerror", isTrain=T,
@@ -347,9 +266,9 @@ knnImpute.gen.wrapper = function(
                      methods.knn) {
     cluster = snow::makeCluster(instances, type="SOCK")
     data = data %>%
-        mutate(area_lot = log10(area_lot)) %>%
-        mutate(area_liveperi_finished=log10(area_liveperi_finished)) %>%
-        mutate_if(is.factor, funs(as.numeric(as.character(.)))) %>%
+        dplyr::mutate(area_lot = log10(area_lot)) %>%
+        dplyr::mutate(area_liveperi_finished=log10(area_liveperi_finished)) %>%
+        dplyr::mutate_if(is.factor, funs(as.numeric(as.character(.)))) %>%
         select_at(dplyr::vars(preds, var.names))
     knnImpute.gen(data, dataset.type, k, preds, var.names, cl=cluster, methods.knn=methods.knn)
 }
@@ -434,7 +353,6 @@ knnImputeClassify = function(XY, predictors, response, k=15) {
         stopifnot(TRUE)
     }
     XY %<>% dplyr::mutate(row_id = 1:nrow(XY))
-    #e = makeNonNAConjunctionExpr(c(predictors, response))
     train.idxs = XY %>%
             dplyr::filter_at(vars(c(predictors, response)), all_vars(!is.na(.))) %>%
             dplyr::pull(row_id)
@@ -490,7 +408,7 @@ naImpute = function(properties, feature, impute_val) {
 
 round1ImputeHelper = function(df, var_name, mutate_call) {
     # Mak a mutate_call like: interp(~ifelse(region_county==county & is.na(var), 0, var), county=2061, var=as.name("area_garage"))
-    df %<>% mutate_(.dots=setNames(mutate_call, var_name))
+    df %<>% dplyr::mutate_(.dots=setNames(mutate_call, var_name))
     # Given a number of fields and their values we want to impute values for them
 }
 

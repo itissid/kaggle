@@ -34,15 +34,13 @@ maeSummary <- function (data,
       names(out) <- "MAE"
       out
 }
-#rmseSummary <- function (data,
-#                        lev = NULL,
-#                        model = NULL) {
-#      out <- ModelMetrics::mse(data$obs, data$pred)
-#      names(out) <- "RMSE"
-#      print("***???")
-#      print(out)
-#      out
-#}
+rmseSummary <- function (data,
+                        lev = NULL,
+                        model = NULL) {
+      out <- ModelMetrics::mse(data$obs, data$pred)
+      names(out) <- "RMSE"
+      out
+}
 
 pretrainDiagnostics = function(train, test) {
     # Place holder for plotting various diagnostics of the test and train dataset
@@ -71,7 +69,7 @@ xgbTree.grid.default <- expand.grid(
     subsample= 0.75
 )
 xgbLinear.grid.default <- expand.grid(
-    nrounds=250, # max # iterations
+    nrounds=100, # max # iterations
     #max_depth = c(4,5), # max depth of the tree
     eta = 0.037, # Learning rate
     alpha=0.4,
@@ -89,7 +87,7 @@ xgbTree.grid.cv <- expand.grid(
     subsample= c(0.75,1)
 )
 
-xgbLinear.grid..cv <- expand.grid(
+xgbLinear.grid.cv <- expand.grid(
     nrounds = c(100, 200, 300), # max # iterations
     eta = c(0.01, 0.05, 0.1, 0.2), # Learning rate
     alpha=c(0.1, 0.4),
@@ -105,11 +103,12 @@ Workflow:
 getDefaultTrControl.xg = function(
               allowParallel=T,
               summaryFunction=rmseSummary,
-              method="repeatedcv"
+              method="repeatedcv",
+              fold=folds
               ) {
     trainControl(
           method = method,
-          number = 5,
+          number = folds,
           repeats = 2,
           verboseIter = TRUE,
           returnData = TRUE,
@@ -123,8 +122,10 @@ getIndexTrControl.xg = function(
                train.idxs.list,
                test.idxs.list,
                allowParallel=T,
+               method="repeatedcv",
                summaryFunction=rmseSummary) {
     trainControl(
+        method = method,
         index=train.idxs.list,
         indexOut=test.idxs.list,
         verboseIter=T,
@@ -246,6 +247,7 @@ trainingAndPredictionWrapper.xg = function(
                 write.predictions=F,
                 stratified.cv=F,
                 folds=10,
+                cvMethod="repeatedcv",
                 use.snow=T,
                 cluster.spec=list(host="localhost"),
                 allowParallel=T,
@@ -268,6 +270,7 @@ trainingAndPredictionWrapper.xg = function(
                  stratified.cv=stratified.cv,
                  lastkdatecv=lastkdatecv,
                  folds=folds,
+                 cvMethod=cvMethod,
                  allowParallel=allowParallel,
                  use.snow=use.snow,
                  cluster.spec=cluster.spec)
@@ -300,6 +303,7 @@ trainingWrapper.xg = function(XY,
             stratified.cv=F,
             lastkdatecv=F,
             folds=10,
+            cvMethod="repeatedcv",
             evalMetric="RMSE",
             summaryFunction=rmseSummary,
             ncores=6,
@@ -312,16 +316,16 @@ trainingWrapper.xg = function(XY,
             crossValPlan = splitKWayStratifiedCrossFoldHelper(XY %>% pull("logerror"), folds)
             train_idxs = lapply(crossValPlan,function(ci){ci$train})
             test_idxs = lapply(crossValPlan, function(ci){ci$app})
-            trControl = getIndexTrControl.xg(train_idxs, test_idxs, T)
+            trControl = getIndexTrControl.xg(method=cvMethod,train_idxs, test_idxs, T)
         } else if(lastkdatecv == T) {
             print("*** generating test folds in CV for last 3 months")
             crossValPlan = splitLast3MonthsCrossFold(XY, folds, dates.select)
             train_idxs = lapply(crossValPlan,function(ci){ci$train})
             test_idxs = lapply(crossValPlan, function(ci){ci$app})
-            trControl = getIndexTrControl.xg(train_idxs, test_idxs, T)
+            trControl = getIndexTrControl.xg(method=cvMethod,train_idxs, test_idxs, T)
         } else {
             print("*** Using randomized test folds")
-            trControl = getDefaultTrControl.xg(allowParallel=allowParallel, summaryFunction=summaryFunction)
+            trControl = getDefaultTrControl.xg(allowParallel=allowParallel, summaryFunction=summaryFunction, folds=folds, method=cvMethod)
         }
         print("..x")
 

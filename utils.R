@@ -211,8 +211,8 @@ prepareData = function(
     }
 
     #######################################################################
-    ######### Scale the variables that are orders of magnitude larger. ################
-    #########################################################################
+    ######### Scale the variables that are orders of magnitude larger. ####
+    #######################################################################
     if(log.transform == T) {
         transactions_cleaned = transactions_cleaned  %>% transformFeaturesForLinearRegression(features.logtransformed)
         print("")
@@ -249,14 +249,15 @@ prepareData = function(
         # features should not be excluded from properties #
     }
 
-
-
     assertthat::assert_that(nrow(transactions_cleaned) == nrow(transactions))
-    # JUST BEFORE YOU START LOPPING OFF ROWS JOIN THE TREATMENT AND THE ORIGINAL DATA FRAME
+    ##################################################################################
+    ######## JUST BEFORE REMOVING ROWS JOIN THE TREATMENT AND THE ORIGINAL DATA FRAME
+    ##################################################################################
     if(do.vtreat == T) {
         assertthat::assert_that(nrow(trainVtreat) == nrow(transactions_cleaned))
         transactions_cleaned = cbind(trainVtreat %>% dplyr::select(-logerror), transactions_cleaned)
     }
+
     #######################################################################
     #################### REMOVE OUTLIERS AND NAs ###########################
     #######################################################################
@@ -350,14 +351,6 @@ prepareDataFeaturesWithVtreat = function(XY, treated.features, vtreat.opts) {
     return(list(tplan, trainVtreat, testDataGenerator(tplan, scale.features, pruneSig)))
 }
 
-recodeHelper = function(X, colname) {
-    X %<>% dplyr::distinct_(.dots=colname)
-    X %<>% dplyr::filter_at(dplyr::vars(colname), dplyr::all_vars(trimws(.) !="")) # Don't include any missing values
-    right.coded.col.name = paste(colname, "_coded", sep="")
-    colnames(X) = c(colname)
-    X[[right.coded.col.name]] = 1:nrow(X)
-    return(X)
-}
 
 # Creates a function that returns a property data set with the date column set to whats needed in the predictions
 
@@ -426,22 +419,35 @@ propertiesDataSetPredictorsWithDateEncoding = function(
     return(pred.df)
 }
 
+recodeHelper = function(X, colname) {
+    X %<>% dplyr::distinct_(.dots=colname)
+    X %<>% dplyr::filter_at(dplyr::vars(colname), dplyr::all_vars(trimws(.) !="")) # Don't include any missing values
+    right.coded.col.name = paste(colname, "_coded", sep="")
+    colnames(X) = c(colname)
+    X[[right.coded.col.name]] = 1:nrow(X)
+    return(X)
+}
+
 recodeCharacterColumns =function(
         transactions, properties, features=c(
                    "zoning_landuse_county", "zoning_property",
                    "flag_tub", "flag_fireplace", "tax_delinquency", "date")) {
+    # TODO: Consider not rolling up blank strings into their own value.
+    # Tested this with some dummy examples:
+    ### a.test = data.frame(b = c(23, NA, NA, " ", 14, 16, 23))
+    ### a =  data.frame(b = c(NA, "", "  ", "    ", 12, 23, 12))
+    ### check recodeCharacterColumns(a, a.test, features=c("b"))  gives the right
+    ### answer
     # Deals with character values in relavent columns of the data set.
     # Assigns NA to the missing values or empty strings.
     recode_list = list()
     for(feature in features) {
-        if((feature == "date" || is.numeric(properties %>% dplyr::pull(feature) %>% na.omit)) &&
-           is.numeric(transactions %>% dplyr::pull(feature) %>% na.omit) ){
+        if((feature == "date" ||
+                is.numeric(
+                    properties %>% dplyr::pull(feature) %>% na.omit)
+                ) &&
+                is.numeric(transactions %>% dplyr::pull(feature) %>% na.omit)) {
             print(paste(feature, " is already numeric, skipping"));
-            f1 = data.frame(rbind(
-                    properties %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature),
-                    transactions %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature))) %>%
-                    recodeHelper(feature) #distinct_(.dots=feature)
-            recode_list[[feature]] = f1
             next
         }
         print(paste("Recoding feature to numeric:", feature))
@@ -449,7 +455,7 @@ recodeCharacterColumns =function(
         f1 = data.frame(rbind(
                 properties %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature),
                 transactions %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature))) %>%
-                recodeHelper(feature) #distinct_(.dots=feature)
+                recodeHelper(feature)
         # Now join and get rid of the old column
         # NA's will be left in place of empty strings
        recode_list[[feature]] = f1

@@ -136,6 +136,7 @@ features.excluded.xg.default = c(
     "rawcensustractandblock", # broken into block and tract
     "fips", # redundant
     "census" # redundant
+    "area_total_calc" # 100% redundant to area_live_finished
 )
 
 features.logtransformed.xg.default = c(
@@ -154,7 +155,6 @@ features.logtransformed.xg.default = c(
     "area_pool",
     "area_shed",
     "area_total_finished",
-    "area_total_calc",
     "area_unknown"
 )
 # Quite a few features here are dropped because of the large # of categories
