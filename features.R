@@ -421,17 +421,17 @@ round1Impute = function(df) {
     }
     # TODO: consider using a "selector" to test various imputations.
     imputeRules = list(
-            area_garage=createRule(c(1286, 2061), "area_garage"),
-            area_basement=createRule(c(2061), "area_basement"),
-            deck=createRule(c(2061), "deck"),
-            flag_fireplace = createRule(c(1286), "flag_fireplace"),
-            area_patio = createRule(c(2061), "area_patio"),
-            area_pool = createRule(c(2061), "area_pool"),
-            area_shed = createRule(c(2061), "area_shed"),
-            framing = createRule(c(3101), "framing"),
-            num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
-            num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
-            num_garage = createRule(c(1286, 2061), "num_garage"),
+            #area_garage=createRule(c(1286, 2061), "area_garage"),
+            #area_basement=createRule(c(2061), "area_basement"),
+            #deck=createRule(c(2061), "deck"),
+            #flag_fireplace = createRule(c(1286), "flag_fireplace"),
+            #area_patio = createRule(c(2061), "area_patio"),
+            #area_pool = createRule(c(2061), "area_pool"),
+            #area_shed = createRule(c(2061), "area_shed"),
+            #framing = createRule(c(3101), "framing"),
+            #num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
+            #num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
+            #num_garage = createRule(c(1286, 2061), "num_garage"),
             tax_delinquency_year = createRule(c(1286, 2061, 3101), "tax_delinquency_year"),
             tax_delinquency = createRule(c(1286, 2061, 3101), "tax_delinquency")
     )
