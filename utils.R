@@ -228,6 +228,8 @@ prepareData = function(
         transactions_cleaned = transactions_cleaned  %>% transformFeaturesForLinearRegression(features.logtransformed)
         print("")
         properties_cleaned = properties_cleaned %>% transformFeaturesForLinearRegression(features.logtransformed)
+    } else {
+        print(" NO LOG TRANSFORMATIONS SELECTED..")
     }
 
     #######################################################################

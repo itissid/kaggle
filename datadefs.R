@@ -140,26 +140,26 @@ features.excluded.xg.default = c(
     "zoning_landuse",
     "zoning_property",
     "zoning_landuse_county",
+    "area_liveperi_finished",
+    "area_patio",
+    "area_pool",
+    "area_shed",
+    "area_garage",
+    "area_total_finished",
+    "area_unknown", 
+    "area_base",
+    "area_basement",
+    "area_firstfloor_finished",
     "date"
 )
 
 features.logtransformed.xg.default = c(
-    "area_base",
-    "area_basement",
     "tax_building",
-    "area_firstfloor_finished",
     "tax_land",
     "tax_property",
     "tax_total",
-    "area_garage",
     "area_live_finished",
-    "area_liveperi_finished",
-    "area_lot",
-    "area_patio",
-    "area_pool",
-    "area_shed",
-    "area_total_finished",
-    "area_unknown"
+    "area_lot"
 )
 # Quite a few features here are dropped because of the large # of categories
 # Ideally we should do multilevel regression for some of them
@@ -173,7 +173,6 @@ features.categorical.xg.default = c(
     "architectural_style",
     "num_unit",
     "build_year",
-    "date",
     "tax_delinquency_year",
     "tract_number",
     "tract_block"

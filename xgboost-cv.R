@@ -207,9 +207,10 @@ prepareDataWrapper.xg = function(
                        do.vtreat=F,
                        engineer.features=F,
                        large.missing.features.prune=T,
-                       missing.feature.cutoff.frac = 0.10,
+                       missing.feature.cutoff.frac = 0.11,
                        features.excluded=features.excluded.xg.default,
                        do.factor.conversion=F, # For LM we exclude this becasue it makes it unscalable
+                       # Convert to factors carefully
                        features.categorical=features.categorical.xg.default,
                        features.logtransformed=features.logtransformed.xg.default,
                        features.vtreat.treated=features.treated.vtreat.xg.default,
