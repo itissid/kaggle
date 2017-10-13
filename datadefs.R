@@ -152,6 +152,10 @@ features.excluded.xg.default = c(
     "area_firstfloor_finished",
     "date",
     "tract_number",
+    "quality",
+    "framing",
+    "architectural_style",
+    "region_neighbor",
     "tract_block"
 )
 
@@ -168,11 +172,7 @@ features.logtransformed.xg.default = c(
 features.categorical.xg.default = c(
     "region_city",
     "region_county",
-    "region_neighbor",
     "region_zip",
-    "quality",
-    "framing",
-    "architectural_style",
     "num_unit",
     "build_year",
     "tax_delinquency_year"

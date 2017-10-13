@@ -199,9 +199,9 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
     # remote mean tax features per city/county/zip
     bys = c("region_city", "region_county", "region_zip")
     before = colnames(X)
-    X %<>% dplyr::group_by(region_city) %>% dplyr::mutate(tax_total_city = mean(tax_total, na.rm=T)) %>% ungroup()
-    X %<>% dplyr::group_by(region_zip) %>%  dplyr::mutate(tax_total_zip = mean(tax_total, na.rm=T)) %>% ungroup()
-    X %<>% dplyr::group_by(region_county) %>%  dplyr::mutate(tax_total_cty = mean(tax_total, na.rm=T)) %>% ungroup()
+    #X %<>% dplyr::group_by(region_city) %>% dplyr::mutate(tax_total_city = mean(tax_total, na.rm=T)) %>% ungroup()
+    #X %<>% dplyr::group_by(region_zip) %>%  dplyr::mutate(tax_total_zip = mean(tax_total, na.rm=T)) %>% ungroup()
+    #X %<>% dplyr::group_by(region_county) %>%  dplyr::mutate(tax_total_cty = mean(tax_total, na.rm=T)) %>% ungroup()
 
     meanBy = function(XTemp, fs, ftarget) {
         for(f in fs) {
@@ -220,26 +220,28 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
     #################################################################
     # Per/sq feet Per room features for tax assessed values.
     # One could average these by the city, zip and county..
+    #!
     X %<>% dplyr::mutate(tax_assd_persqfeet_living=tax_total/area_live_finished)
-    X %<>% dplyr::mutate(tax_assd_persqfeet_lot=tax_total/area_lot)
+    #X %<>% dplyr::mutate(tax_assd_persqfeet_lot=tax_total/area_lot)
+    #!
     X %<>% dplyr::mutate(tax_assd_perroom = tax_total/(num_room+1))
 
 
     # And there county city and zip meand
-    X %<>% meanBy(bys, "tax_assd_persqfeet_living")
-    X %<>% meanBy(bys, "tax_assd_persqfeet_lot")
-    X %<>% meanBy(bys, "tax_assd_perroom")
+    #X %<>% meanBy(bys, "tax_assd_persqfeet_living")
+    #X %<>% meanBy(bys, "tax_assd_persqfeet_lot")
+    #X %<>% meanBy(bys, "tax_assd_perroom")
     #################################################################
     ############# The property taxes ###############################
     #################################################################
     X %<>% dplyr::mutate(tax_prop_persqfeet_living=tax_property/area_live_finished)
-    X %<>% dplyr::mutate(tax_prop_persqfeet_lot=tax_property/area_lot)
+    #X %<>% dplyr::mutate(tax_prop_persqfeet_lot=tax_property/area_lot)
     X %<>% dplyr::mutate(tax_prop_perroom = tax_property/(num_room+1))
     # And their county, city and zip means
-    X %<>% meanBy(bys, "tax_prop_persqfeet_living")
-    X %<>% meanBy(bys, "tax_prop_persqfeet_lot")
-    X %<>% meanBy(bys, "tax_prop_perroom")
-    proposed_removal = c("tax_property", "tax_total", "region_zip", "area_lot", "area_live_finished")
+    #X %<>% meanBy(bys, "tax_prop_persqfeet_living")
+    #X %<>% meanBy(bys, "tax_prop_persqfeet_lot")
+    #X %<>% meanBy(bys, "tax_prop_perroom")
+    proposed_removal = c("tax_property", "tax_total", "area_live_finished")
     return(list(X, setdiff(colnames(X), before), proposed_removal))
 }
 

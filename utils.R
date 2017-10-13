@@ -238,6 +238,7 @@ prepareData = function(
     #################### NOW WE DO ALL THE FEATURE PRUNING ###################
     #######################################################################
     if(length(train.features.excluded) >0) {
+        transaction_dates = transactions_cleaned %>% select(date)
         transactions_cleaned %<>% dplyr::select(-dplyr::one_of(train.features.excluded))
     }
 
@@ -277,19 +278,25 @@ prepareData = function(
     #################### REMOVE OUTLIERS AND NAs ###########################
     #######################################################################
     if(remove.outliers==T) {
+        transaction_dates %>% dplyr::filter(transactions_cleaned$date <=outlier.range[2] && 
+                                                  transactions_cleaned$date >= outlier.range[1])
         transactions_cleaned = transactions_cleaned  %>%
             dplyr::filter(logerror <=outlier.range[2] & logerror >=outlier.range[1])
+        assertthat::assert_that(nrow(transaction_dates) == nrow(transactions_cleaned))
     }
 
     if(omit.nas == T) {
+        transactions_date %<>% dplyr::filter(transactions_cleaned %>% complete.cases)
         transactions_cleaned %<>% na.omit
         # properties_cleaned %<>% na.omit # The properties are needed for prediction even if its NA
+        assertthat::assert_that(nrow(transaction_dates) == nrow(transactions_cleaned))
     }
     assertthat::assert_that(nrow(properties_cleaned) == nrow(properties))
+    assertthat::assert_that(nrow(transaction_dates) == nrow(transactions_cleaned))
     print(paste("Using ", length(colnames(transactions_cleaned)) , " features in transactions:"))
     print(colnames(transactions_cleaned))
     print("..")
-    return(list(transactions_cleaned, properties_cleaned, recode_list, testVtreatFn, tplan))
+    return(list(transactions_cleaned, transactions_date, properties_cleaned, recode_list, testVtreatFn, tplan))
 }
 
 prepareDataFeaturesWithVtreat = function(XY, treated.features, vtreat.opts) {
@@ -575,10 +582,10 @@ splitTrainingData = function(Y, split_percent=0.75) {
 
 splitLast3MonthsCrossFold = function(XY, k, dates.select) {
     rowsAfterDatebreak = XY %>%
-        dplyr::mutate(row.name = as.integer(1:nrow(XY))) %>% dplyr::filter(date %in% dates.select) %>% pull(row.name)
+        dplyr::mutate(row.name = as.integer(1:nrow(XY))) %>% dplyr::filter(date %in% dates.select) %>% dplyr::pull(row.name)
 
     rowsBeforeDatebreak = XY %>%
-        dplyr::mutate(row.name = as.integer(1:nrow(XY))) %>% dplyr::filter(!date %in% dates.select) %>% pull(row.name)
+        dplyr::mutate(row.name = as.integer(1:nrow(XY))) %>% dplyr::filter(!date %in% dates.select) %>% dplyr::pull(row.name)
     lapply(1:k, function(k_) {
                testRows = sample(rowsAfterDatebreak, as.integer(length(rowsAfterDatebreak)/k))
                testRows.2 = sample(rowsBeforeDatebreak, as.integer(length(rowsBeforeDatebreak)/k))

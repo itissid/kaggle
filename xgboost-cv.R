@@ -69,7 +69,7 @@ xgbTree.grid.default <- expand.grid(
     subsample= 0.75
 )
 xgbLinear.grid.default <- expand.grid(
-    nrounds=c(100, 150, 200), # max # iterations
+    nrounds=100, # max # iterations
     #max_depth = c(4,5), # max depth of the tree
     eta = 0.037, # Learning rate
     alpha=0.4,
@@ -215,7 +215,7 @@ prepareDataWrapper.xg = function(
                        features.logtransformed=features.logtransformed.xg.default,
                        features.vtreat.treated=features.treated.vtreat.xg.default,
                        vtreat.opts=list(scale.features=T, usecached.plan=F, pruneSig=NULL)) {
-    list[transactions, properties, recode_list, testVtreatFn, tplan] = prepareData(
+    list[transactions, tdates, properties, recode_list, testVtreatFn, tplan] = prepareData(
          recode_chars=recode_chars,
          log.transform=log.transform,
          large.missing.features.prune=large.missing.features.prune,
@@ -234,7 +234,7 @@ prepareDataWrapper.xg = function(
          )
 
 
-    return(list(transactions, properties, recode_list, testVtreatFn, tplan))
+    return(list(transactions,tdates, properties, recode_list, testVtreatFn, tplan))
 }
 
 trainingAndPredictionWrapper.xg = function(
