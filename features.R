@@ -5,10 +5,73 @@ library(dplyr)
 source("smoother.R")
 
 getBuildingFeatures = function() {
-    # TODO: modularize feature
+    # POSSIBLE IMPROVEMENT: encapsulate features a bit more
 }
 getNeighborhoodFeatures = function() {
-    # TODO: modularize feature
+    # POSSIBLE IMPROVEMENT: encapsulate features a bit more
+}
+
+makePropertiesFeaturesReadable = function(properties) {
+    properties %>% dplyr::rename(
+      id_parcel = parcelid,
+      build_year = yearbuilt,
+      area_basement = basementsqft,
+      area_patio = yardbuildingsqft17,
+      area_shed = yardbuildingsqft26,
+      area_pool = poolsizesum,
+      area_lot = lotsizesquarefeet,
+      area_garage = garagetotalsqft,
+      area_firstfloor_finished = finishedfloor1squarefeet,
+      area_total_calc = calculatedfinishedsquarefeet,
+      area_base = finishedsquarefeet6,
+      area_live_finished = finishedsquarefeet12,
+      area_liveperi_finished = finishedsquarefeet13,
+      area_total_finished = finishedsquarefeet15,
+      area_unknown = finishedsquarefeet50,
+      num_unit = unitcnt,
+      num_story = numberofstories,
+      num_room = roomcnt,
+      num_bathroom = bathroomcnt,
+      num_bedroom = bedroomcnt,
+      num_bathroom_calc = calculatedbathnbr,
+      num_bath = fullbathcnt,
+      num_75_bath = threequarterbathnbr,
+      num_fireplace = fireplacecnt,
+      num_pool = poolcnt,
+      num_garage = garagecarcnt,
+      region_county = regionidcounty,
+      region_city = regionidcity,
+      region_zip = regionidzip,
+      region_neighbor = regionidneighborhood,
+      tax_total = taxvaluedollarcnt,
+      tax_building = structuretaxvaluedollarcnt,
+      tax_land = landtaxvaluedollarcnt,
+      tax_property = taxamount,
+      tax_year = assessmentyear,
+      tax_delinquency = taxdelinquencyflag,
+      tax_delinquency_year = taxdelinquencyyear,
+      zoning_property = propertyzoningdesc,
+      zoning_landuse = propertylandusetypeid,
+      zoning_landuse_county = propertycountylandusecode,
+      flag_fireplace = fireplaceflag,
+      flag_tub = hashottuborspa,
+      flag_tub_extra = pooltypeid10,
+      quality = buildingqualitytypeid,
+      framing = buildingclasstypeid,
+      material = typeconstructiontypeid,
+      deck = decktypeid,
+      story = storytypeid,
+      heating = heatingorsystemtypeid,
+      aircon = airconditioningtypeid,
+      architectural_style= architecturalstyletypeid
+    )
+}
+
+makeTransactionFeaturesReadable = function(transactions) {
+    transactions %>% makePropertiesFeaturesReadable() %>% dplyr::rename(
+      id_parcel = parcelid,
+      date = transactiondate
+    )
 }
 
 discretizetime.month = function(data, time.feature.name=date, time.feature.name.new=date) {
@@ -187,7 +250,7 @@ applyCrossFrameToX = function(
 }
 
 engineerFeatures = function(X, bys = c("region_city", "region_county", "region_zip"),
-                           remove_marginal=F) {
+                            avg.bys=c("region_city", "region_zip", "region_county")) {
     # Average features for tax assesed and property taxes
     # There are two types of tax assessments:
     # - One for the land area of the parcel: tax_land
@@ -197,7 +260,6 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
     # I might want to remove these by groups to check effectiveness
     # remove the per sq feet average features by zip/county/city.
     # remote mean tax features per city/county/zip
-    bys = c("region_city", "region_county", "region_zip")
     before = colnames(X)
     #X %<>% dplyr::group_by(region_city) %>% dplyr::mutate(tax_total_city = mean(tax_total, na.rm=T)) %>% ungroup()
     #X %<>% dplyr::group_by(region_zip) %>%  dplyr::mutate(tax_total_zip = mean(tax_total, na.rm=T)) %>% ungroup()
@@ -228,19 +290,21 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
 
 
     # And there county city and zip meand
-    #X %<>% meanBy(bys, "tax_assd_persqfeet_living")
-    #X %<>% meanBy(bys, "tax_assd_persqfeet_lot")
-    #X %<>% meanBy(bys, "tax_assd_perroom")
+    if(length(avg.bys) > 0) {
+        X %<>% meanBy(avg.bys, "tax_assd_persqfeet_living")
+        X %<>% meanBy(avg.bys, "tax_assd_perroom")
+    }
     #################################################################
     ############# The property taxes ###############################
     #################################################################
     X %<>% dplyr::mutate(tax_prop_persqfeet_living=tax_property/area_live_finished)
     #X %<>% dplyr::mutate(tax_prop_persqfeet_lot=tax_property/area_lot)
     X %<>% dplyr::mutate(tax_prop_perroom = tax_property/(num_room+1))
-    # And their county, city and zip means
-    #X %<>% meanBy(bys, "tax_prop_persqfeet_living")
-    #X %<>% meanBy(bys, "tax_prop_persqfeet_lot")
-    #X %<>% meanBy(bys, "tax_prop_perroom")
+    # And their) > g county, city and zip means
+    if(length(avg.bys) > 0) {
+        X %<>% meanBy(avg.bys, "tax_prop_persqfeet_living")
+        X %<>% meanBy(avg.bys, "tax_prop_perroom")
+    }
     proposed_removal = c("tax_property", "tax_total", "area_live_finished")
     return(list(X, setdiff(colnames(X), before), proposed_removal))
 }
