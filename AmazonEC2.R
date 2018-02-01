@@ -1,6 +1,27 @@
 library(doSNOW)
 library(foreach)
+# *********************************************************************************************************************
+# NOTE: install itissid/aws.ec2 to use this instead of cloudyr/aws.ec2. The original one contains bugs that I fixed.
+# *********************************************************************************************************************
+# Embarrasingly simple parallelism using AWS. Often I will start the cluster using startCluster. however incase I want to 
+# do spotBidding for large instances I can chose to 
+# start cluster here, ami is based on a "worker node" machine image that I created
+# We can only have 20 instances running at once without prior permission from amazon.
 
+#cl <- startCluster(ami="ami-xxxx",key="Keyname",instance.count=19,instance.type="t2.micro",security.groups="sg-xxxx",verbose=TRUE)
+#
+#
+#machines <- cl$instances$dnsName
+# setDefaultClusterOptions(port=10187)
+# clust <- makeCluster(machines,type="SOCK")
+# registerDoSNOW(clust)
+#
+#
+###### Do parallel work here
+#  stopCluster(clust)
+## stops the SNOW cluster
+#  terminateCluster(cl)
+## terminates the EC2 worker instances, so billing stops.  
 
 # need to re-run these functions from AWS.tools so that they are added to the namespace 
 sleep.while.pending <- function(instances, sleep.time=2,verbose=TRUE) {
@@ -45,6 +66,7 @@ startCluster <- function (ami,
                           instance.count,
                           instance.type,
                           keypair="sid-aws-key", # This is needed just for access
+                          security.group <- "sg-ec2b7c9f",
                           verbose = TRUE) 
 {
     # Assume the keys are in the default ~/.aws/credentials file for this instance.
@@ -52,7 +74,7 @@ startCluster <- function (ami,
     #    "--key", key, "--instance-count", instance.count, "--instance-type", 
     #    instance.type, "--group",security.groups)
     subnet = aws.ec2::describe_subnets()
-    security.group <- "sg-ec2b7c9f" # SEE AWS for what this group is.
+     # SEE AWS for what this group is.
     # Need to add a key pair and the private file to the started instances.
     # Also I want to add it to the .ssh/config files to manage ssh without password.
     res = aws.ec2::run_instances(
@@ -71,7 +93,7 @@ startCluster <- function (ami,
     #    print(cmd)
     #}
     sleep.while.pending(instances, verbose=verbose, sleep.time=10)
-    dnsNames = getPrivateDNSFromReservations(res)
+    dnsNames = .getPrivateDNSFromReservations(res)
     return(clusterSpecFromInstances(dnsNames))
 }
 
@@ -96,17 +118,10 @@ disassocWithEIP = function() {
                      elastic_ips)
     return(res)
 }
-clusterSpecFromInstances = function(instances) {
-    instances = as.character(instances)
-    names(instances) = rep("host", length(instances))
-    return(instances)
-}
 
-getExistingInstancesAttr = function(attribute) {
-    sapply(aws.ec2::describe_instances(), function(x) {
-        sapply(x$instancesSet, function(instance) instance[[attribute]]) 
-    })
-}
+# If you started the cluster from aws web console, use these routines to get DNS names from these two routines.
+# you would need to make them into a cluster spec by calling clusterSpecFromInstances() on the DNS name.
+
 getExistingInstancesPublicDNS = function() {
     sapply(aws.ec2::describe_instances(), function(x) {
         sapply(x$instancesSet, function(instance) instance$dnsName) 
@@ -120,28 +135,23 @@ getExistingInstancesPrivateDNS = function() {
     instanceSets.flat[names(instanceSets.flat) == "privateDnsName"]
 }
 
-getPrivateDNSFromReservations = function(reservations) {
+# Private and helper routines. Don't use these directly.
+getExistingInstancesAttr = function(attribute) {
+    sapply(aws.ec2::describe_instances(), function(x) {
+        sapply(x$instancesSet, function(instance) instance[[attribute]]) 
+    })
+}
+clusterSpecFromInstances = function(instances) {
+    instances = as.character(instances)
+    names(instances) = rep("host", length(instances))
+    return(instances)
+}
+
+.getPrivateDNSFromReservations = function(reservations) {
     instancesSets = sapply(reservations, function(x) {x$privateDnsName})
 }
 
-getPublicDNSFromInstances = function(instances) {
+.getPublicDNSFromInstances = function(instances) {
    sapply(instances, function(x) aws.ec2::describe_instances(x)[[1]]$instancesSet[[1]]$dnsName)
 }
 
-# start cluster here, ami is based on a "worker node" machine image that I created
-# We can only have 20 instances running at once without prior permission from amazon.
-#cl <- startCluster(ami="ami-xxxx",key="Keyname",instance.count=19,instance.type="t2.micro",security.groups="sg-xxxx",verbose=TRUE)
-#
-#
-#machines <- cl$instances$dnsName
-#setDefaultClusterOptions(port=10187)
-#clust <- makeCluster(machines,type="SOCK")
-#registerDoSNOW(clust)
-#
-#
-###### Do parallel work here
-#
-#stopCluster(clust)
-## stops the SNOW cluster
-#terminateCluster(cl)
-## terminates the EC2 worker instances, so billing stops.  
