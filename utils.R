@@ -387,7 +387,9 @@ splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingDat
     assertthat::assert_that(length(YTest) > 0)
     return(list(XTrain, YTrain, XTest, YTest))
 }
-# May be redundant to the regression-vtreat branch code
+
+# May have some redundant stuff to the regression-vtreat branch code. 
+# TODO: Refactor this to reuse some of that code.
 trainingVtreatWrapper = function(
            XY,
            features.restricted,
