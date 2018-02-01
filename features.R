@@ -5,68 +5,73 @@ library(dplyr)
 source("smoother.R")
 
 getBuildingFeatures = function() {
-    # TODO: modularize feature
+    # POSSIBLE IMPROVEMENT: encapsulate features a bit more
 }
 getNeighborhoodFeatures = function() {
-    # TODO: modularize feature
+    # POSSIBLE IMPROVEMENT: encapsulate features a bit more
 }
 
-getFeatures = function() {
-    # flag_tub and other pooltypeid properties were removed
-    f.amenities.sparse = c("deck", "aircon", "num_fireplace", "num_pool", "pooltypeid10", "area_pool")
+makePropertiesFeaturesReadable = function(properties) {
+    properties %>% dplyr::rename(
+      id_parcel = parcelid,
+      build_year = yearbuilt,
+      area_basement = basementsqft,
+      area_patio = yardbuildingsqft17,
+      area_shed = yardbuildingsqft26,
+      area_pool = poolsizesum,
+      area_lot = lotsizesquarefeet,
+      area_garage = garagetotalsqft,
+      area_firstfloor_finished = finishedfloor1squarefeet,
+      area_total_calc = calculatedfinishedsquarefeet,
+      area_base = finishedsquarefeet6,
+      area_live_finished = finishedsquarefeet12,
+      area_liveperi_finished = finishedsquarefeet13,
+      area_total_finished = finishedsquarefeet15,
+      area_unknown = finishedsquarefeet50,
+      num_unit = unitcnt,
+      num_story = numberofstories,
+      num_room = roomcnt,
+      num_bathroom = bathroomcnt,
+      num_bedroom = bedroomcnt,
+      num_bathroom_calc = calculatedbathnbr,
+      num_bath = fullbathcnt,
+      num_75_bath = threequarterbathnbr,
+      num_fireplace = fireplacecnt,
+      num_pool = poolcnt,
+      num_garage = garagecarcnt,
+      region_county = regionidcounty,
+      region_city = regionidcity,
+      region_zip = regionidzip,
+      region_neighbor = regionidneighborhood,
+      tax_total = taxvaluedollarcnt,
+      tax_building = structuretaxvaluedollarcnt,
+      tax_land = landtaxvaluedollarcnt,
+      tax_property = taxamount,
+      tax_year = assessmentyear,
+      tax_delinquency = taxdelinquencyflag,
+      tax_delinquency_year = taxdelinquencyyear,
+      zoning_property = propertyzoningdesc,
+      zoning_landuse = propertylandusetypeid,
+      zoning_landuse_county = propertycountylandusecode,
+      flag_fireplace = fireplaceflag,
+      flag_tub = hashottuborspa,
+      flag_tub_extra = pooltypeid10,
+      quality = buildingqualitytypeid,
+      framing = buildingclasstypeid,
+      material = typeconstructiontypeid,
+      deck = decktypeid,
+      story = storytypeid,
+      heating = heatingorsystemtypeid,
+      aircon = airconditioningtypeid,
+      architectural_style= architecturalstyletypeid
+    )
+}
 
-    f.amenities = c("flag_tub", "heating")
-    f.location = c("longitude", "latitude")
-    f.location.cat = c("region_county", "region_city", "region_zip")
-    f.location.cat.sparse = c("region_neighbor")
-
-    f.zoning.cat = c("zoning_property", "zoning_landuse", "zoning_landuse_county") # two of these are chars
-    # Building specific features
-    f.building = c("num_bathroom", "num_bedroom",  "build_year", "num_unit", "quality", "num_room")
-
-    # Following are atleast 70% missing to as much as 99%
-    f.building.sparse = c("num_garage", "num_story",  "num_75_bath","framing",  "material", "architectural_style") # largely missing...
-    f.tax = c("tax_total", "tax_land", "tax_property")
-
-    f.tax.cat = c("tax_delinquency", "tax_delinquency_year") # Only ~ 2% of the rows are delinquient
-
-    # Sparse features, some of which are missing completely at random,
-    # for example deck or pool is missing completely at random
-    # The area measurements of primenter and total_finished seem distinct from the rest of area measurements
-    f.area = c("area_total_calc", "area_lot") # area_live_finished is redundant
-    f.area.sparse = c("area_basement",
-    "area_patio",
-    "area_shed",
-    "area_pool",
-    "area_garage",
-    "area_firstfloor_finished",
-    "area_base",
-    "area_liveperi_finished",
-    "area_total_finished",
-    "area_unknown")
-    f.transactions = c("date")
-
-    # Excluded properties, due to reasons of redundancy
-    f.amenities.exc = c('pooltypeid2' ,'pooltypeid7', # excluded because these sum to poolcnt which is used instead
-        'num_bathroom_calc', 'num_bath', # Highly correlated features with num_bathroom.
-        'flag_tub', "flag_fireplace")
-    f.area.exc = c('area_live_finished')
-    f.census.exc = c('fips', 'rawcensustractandblock', 'censustractandblock') # Census properties not used yet
-    f.tax.exclude = c("tax_building", "tax_year") # this is 2015 for the current tarsactions.
-    f.building.exclude = c("story") # this is redundant as documented in the Captains log, to the area_basement
-
-    sparse_props = c(f.area.sparse, f.amenities.sparse, f.building.sparse, f.location.cat.sparse)
-    # TODO: Move me to a separate function
-    selected_props = (c(f.amenities,
-	    f.location, f.location.cat,
-	    f.zoning.cat,
-	    f.building,
-	    f.tax, f.tax.cat,
-	    f.area,
-	    f.transactions))
-    excluded_prop = c(f.amenities.exc, f.area.exc, f.census.exc, f.tax.exclude,f.building.exclude)
-    return(list("chosen"=selected_props, "sparse"=sparse_props, "excluded"=excluded_prop))
-
+makeTransactionFeaturesReadable = function(transactions) {
+    transactions %>% makePropertiesFeaturesReadable() %>% dplyr::rename(
+      id_parcel = parcelid,
+      date = transactiondate
+    )
 }
 
 discretizetime.month = function(data, time.feature.name=date, time.feature.name.new=date) {
@@ -78,7 +83,7 @@ discretizetime.month = function(data, time.feature.name=date, time.feature.name.
 transformFeaturesForLinearRegression = function(
         data,
         txn.features =c("area_lot", "area_total_calc", "tax_total", "tax_land", "tax_property", "tax_building",
-                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage", 
+                        "area_total_finished", "area_live_finished", "area_firstfloor_finished", "area_garage",
                         "area_shed", "area_patio", "area_basement", "area_base", "area_unknown", "area_pool",
                         "area_liveperi_finished")) {
     # TODO: parameterize the features we want to transform as well
@@ -101,28 +106,6 @@ transformFeaturesForLinearRegression = function(
     return(data)
 }
 
-makeNonNAConjunctionExpr = function(predictors) {
-    # Given a char vector c("a", "b", "c") this returns an expression:
-    # ~!is.na(a) & !is.na(b) & !is.na(c)
-    # Found a much better way of doing this:
-    # https://stackoverflow.com/questions/46146948/r-create-conjunction-of-expressions-from-column-list
-    f = function(init, i) {
-        i_name = as.name(i);
-        if(is.null(init) || length(init) == 0) {
-            return(expr(!is.na(!!i_name)))
-        }
-        init = if(is_call(init)) {
-                    init
-                } else {
-                    expr(!is.na(!!as.name(init)))
-                }
-        e = expr(!!init & !is.na(!!i_name));
-        return(e)
-    }
-    e = Reduce(f, predictors[-1], predictors[1])
-    return(quo(!!e))
-}
-
 impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
     xcol.name.new.enquo = enquo(xcol.name.new)
     depvar.name.enquo = enquo(depvar.name)
@@ -135,16 +118,16 @@ impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
 impactModel = function(xcol, depvar) {
     # xcol is your categorical variable and depvar is the variable that will be
     # whose value will be
-  n = length(depvar)
-  p = sum(depvar)/n
-  # duplicate output for NA (average NA towards grand uniform average)
-  x = c(xcol,xcol)
-  y = c(depvar, depvar)
-  x[(1+n):(2*n)] = NA
-  levelcounts = table(x, y, useNA="always")
-  condprobmodel = (levelcounts[,2] + p)/(levelcounts[,1] + levelcounts[,2] + 1.0)
-  # apply model example: applyImpactModel(condprobmodel,data[,varname])
-  condprobmodel
+    n = length(depvar)
+    p = sum(depvar)/n
+    # duplicate output for NA (average NA towards grand uniform average)
+    x = c(xcol,xcol)
+    y = c(depvar, depvar)
+    x[(1+n):(2*n)] = NA
+    levelcounts = table(x, y, useNA="always")
+    condprobmodel = (levelcounts[,2] + p)/(levelcounts[,1] + levelcounts[,2] + 1.0)
+    # apply model example: applyImpactModel(condprobmodel,data[,varname])
+    condprobmodel
 }
 
 # apply model to column to essentially return condprobmodel[rawx]
@@ -219,7 +202,7 @@ createCrossFrameTreatment = function(
                 #} else {
                 #    prep = readRDS(fn)
                 #}
-                if(makeLocalCluster == T) 
+                if(makeLocalCluster == T)
                     snow::stopCluster(cluster)
                 print("*****")
                 prep$opts.vtreat=opts.vtreat
@@ -232,7 +215,6 @@ createCrossFrameTreatment = function(
     print("**** ****")
     return(res)
 }
-
 
 applyCrossFrameToX = function(
        X, prep, pruneSig=0.01, yName="logerror", isTrain=T,
@@ -267,63 +249,64 @@ applyCrossFrameToX = function(
     return(XTreated)
 }
 
-knnPerformanceComparison = function(XY, predictors, response) {
-        # fast knn handily beats the knn I use .
-        t3 = system.time({XY = XY %>%
-            select_at(vars(predictors, response)) %>%
-            filter_at(vars(predictors, response), all_vars(!is.na(.))) %>%
-            mutate_if(is.factor, funs(as.numeric(as.character(.))))
-        X = XY %>% select(predictors)
-        Y = XY %>% pull(response)
-        # This step is slow, I could do better by just sampling across all non na
-        # columns and save those splits
-        splt <- vtreat::kWayStratifiedY(nrow(X), 10, NULL, Y)
-        tr.idx  = splt[[1]]$train
-        rm(splt)
-        })
-        print(t3)
-        x.tr <- X[tr.idx,] %>% as.matrix
-        x.te <- X[-tr.idx,] %>% as.matrix
-        y.tr <- Y[tr.idx]
-        y.te <- Y[-tr.idx]
-        print(dim(x.tr))
-        print(dim(x.te))
-        t2 <- system.time({
-              ncores <- as.integer(parallel::detectCores()*0.8)
-              cl <- snow::makeCluster(rep("localhost", ncores), type = "SOCK")
-              estm = smoothz(cbind(x.tr, y=y.tr), knnreg, k=10 , nchunks=20, cls=cl)
-              print("**")
-              idx = RANN::nn2(data=x.tr, query=x.te, k=1, treetype="kd", searchtype="standard")$nn.index
-              yhat2 = estm[idx]
-              snow::stopCluster(cl)
-        })
-        print(t2)
-        t1 <- system.time({
-              yhat1 <- fastknn::fastknn(xtr = x.tr, ytr = as.factor(y.tr), xte = x.te, k = 10, method = "dist")
-        })
-        print(t1)
-}
+engineerFeatures = function(X, bys = c("region_city", "region_county", "region_zip"),
+                            avg.bys=c("region_city", "region_zip", "region_county")) {
+    # Average features for tax assesed and property taxes
+    # There are two types of tax assessments:
+    # - One for the land area of the parcel: tax_land
+    # - And one for the  parcel itself: tax_total
+    # Property taxes
+    # variations may be using the mean or median function
+    # I might want to remove these by groups to check effectiveness
+    # remove the per sq feet average features by zip/county/city.
+    # remote mean tax features per city/county/zip
+    before = colnames(X)
+    #X %<>% dplyr::group_by(region_city) %>% dplyr::mutate(tax_total_city = mean(tax_total, na.rm=T)) %>% ungroup()
+    #X %<>% dplyr::group_by(region_zip) %>%  dplyr::mutate(tax_total_zip = mean(tax_total, na.rm=T)) %>% ungroup()
+    #X %<>% dplyr::group_by(region_county) %>%  dplyr::mutate(tax_total_cty = mean(tax_total, na.rm=T)) %>% ungroup()
 
-knnPerformance = function(f.impute, X, predictors, k=50, nchunks=7) {
-    # Measure the performance of KNN by splitting the data and then mes
-    mkDataFrame = function(df, response) {
-        print(response)
-        X.fpresent = df %>%
-            select_at(vars(predictors, response)) %>%
-            filter_at(vars(predictors, response), all_vars(!is.na(.))) %>%
-            mutate_if(is.factor, funs(as.numeric(as.character(.))))
-        # Introduce some NA's into X
-        X.model = X.fpresent %>%
-            mutate(!!response :=ifelse(rbinom(nrow(X.fpresent), 1, 0.9) == 1, !!quo(!!as.name(response)), NA))
-        assertthat::assert_that(nrow(X.model) > 0)
-        # get the results from the imputation routine
-        result = knnImputeClassify(X.model, predictors, response, k=k, nchunks=nchunks)
-        # Measure RMSE against the true data set
-        rmse = sqrt(mean((result$prediction - X.fpresent[result$id, response])^2))
-        return(rmse)
+    meanBy = function(XTemp, fs, ftarget) {
+        for(f in fs) {
+            ftarget_by_f = paste(ftarget, "_", f, sep="")
+            ftarget.quo = quo(!!as.name(ftarget))
+            XTemp %<>%
+                dplyr::group_by_(.dots=c(f)) %>%
+                dplyr::mutate(!!ftarget_by_f := mean(!!ftarget.quo, na.rm=T)) %>%
+                ungroup()
+       }
+       return(XTemp)
     }
 
-    lapply(X=f.impute, FUN=mkDataFrame, df=X)
+    #################################################################
+    ############# The tax total assessd value  #####################
+    #################################################################
+    # Per/sq feet Per room features for tax assessed values.
+    # One could average these by the city, zip and county..
+    #!
+    X %<>% dplyr::mutate(tax_assd_persqfeet_living=tax_total/area_live_finished)
+    #X %<>% dplyr::mutate(tax_assd_persqfeet_lot=tax_total/area_lot)
+    #!
+    X %<>% dplyr::mutate(tax_assd_perroom = tax_total/(num_room+1))
+
+
+    # And there county city and zip meand
+    if(length(avg.bys) > 0) {
+        X %<>% meanBy(avg.bys, "tax_assd_persqfeet_living")
+        X %<>% meanBy(avg.bys, "tax_assd_perroom")
+    }
+    #################################################################
+    ############# The property taxes ###############################
+    #################################################################
+    X %<>% dplyr::mutate(tax_prop_persqfeet_living=tax_property/area_live_finished)
+    #X %<>% dplyr::mutate(tax_prop_persqfeet_lot=tax_property/area_lot)
+    X %<>% dplyr::mutate(tax_prop_perroom = tax_property/(num_room+1))
+    # And their) > g county, city and zip means
+    if(length(avg.bys) > 0) {
+        X %<>% meanBy(avg.bys, "tax_prop_persqfeet_living")
+        X %<>% meanBy(avg.bys, "tax_prop_perroom")
+    }
+    proposed_removal = c("tax_property", "tax_total", "area_live_finished")
+    return(list(X, setdiff(colnames(X), before), proposed_removal))
 }
 
 # Call like so:
@@ -347,9 +330,9 @@ knnImpute.gen.wrapper = function(
                      methods.knn) {
     cluster = snow::makeCluster(instances, type="SOCK")
     data = data %>%
-        mutate(area_lot = log10(area_lot)) %>%
-        mutate(area_liveperi_finished=log10(area_liveperi_finished)) %>%
-        mutate_if(is.factor, funs(as.numeric(as.character(.)))) %>%
+        dplyr::mutate(area_lot = log10(area_lot)) %>%
+        dplyr::mutate(area_liveperi_finished=log10(area_liveperi_finished)) %>%
+        dplyr::mutate_if(is.factor, funs(as.numeric(as.character(.)))) %>%
         select_at(dplyr::vars(preds, var.names))
     knnImpute.gen(data, dataset.type, k, preds, var.names, cl=cluster, methods.knn=methods.knn)
 }
@@ -434,7 +417,6 @@ knnImputeClassify = function(XY, predictors, response, k=15) {
         stopifnot(TRUE)
     }
     XY %<>% dplyr::mutate(row_id = 1:nrow(XY))
-    #e = makeNonNAConjunctionExpr(c(predictors, response))
     train.idxs = XY %>%
             dplyr::filter_at(vars(c(predictors, response)), all_vars(!is.na(.))) %>%
             dplyr::pull(row_id)
@@ -490,7 +472,7 @@ naImpute = function(properties, feature, impute_val) {
 
 round1ImputeHelper = function(df, var_name, mutate_call) {
     # Mak a mutate_call like: interp(~ifelse(region_county==county & is.na(var), 0, var), county=2061, var=as.name("area_garage"))
-    df %<>% mutate_(.dots=setNames(mutate_call, var_name))
+    df %<>% dplyr::mutate_(.dots=setNames(mutate_call, var_name))
     # Given a number of fields and their values we want to impute values for them
 }
 
@@ -502,17 +484,17 @@ round1Impute = function(df) {
     }
     # TODO: consider using a "selector" to test various imputations.
     imputeRules = list(
-            area_garage=createRule(c(1286, 2061), "area_garage"),
-            area_basement=createRule(c(2061), "area_basement"),
-            deck=createRule(c(2061), "deck"),
-            flag_fireplace = createRule(c(1286), "flag_fireplace"),
-            area_patio = createRule(c(2061), "area_patio"),
-            area_pool = createRule(c(2061), "area_pool"),
-            area_shed = createRule(c(2061), "area_shed"),
-            framing = createRule(c(3101), "framing"),
-            num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
-            num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
-            num_garage = createRule(c(1286, 2061), "num_garage"),
+            #area_garage=createRule(c(1286, 2061), "area_garage"),
+            #area_basement=createRule(c(2061), "area_basement"),
+            #deck=createRule(c(2061), "deck"),
+            #flag_fireplace = createRule(c(1286), "flag_fireplace"),
+            #area_patio = createRule(c(2061), "area_patio"),
+            #area_pool = createRule(c(2061), "area_pool"),
+            #area_shed = createRule(c(2061), "area_shed"),
+            #framing = createRule(c(3101), "framing"),
+            #num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
+            #num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
+            #num_garage = createRule(c(1286, 2061), "num_garage"),
             tax_delinquency_year = createRule(c(1286, 2061, 3101), "tax_delinquency_year"),
             tax_delinquency = createRule(c(1286, 2061, 3101), "tax_delinquency")
     )
