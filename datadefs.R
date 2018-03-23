@@ -137,9 +137,12 @@ features.excluded.xg.default = c(
     "fips", # redundant
     "census", # redundant
     "area_total_calc", # 100% redundant to area_live_finished
-    "zoning_landuse",
+    "tax_year",
+    "aircon",
+    "heating",
+    #"zoning_landuse",
     "zoning_property",
-    "zoning_landuse_county",
+    #"zoning_landuse_county",
     "area_liveperi_finished",
     "area_patio",
     "area_pool",
@@ -148,15 +151,16 @@ features.excluded.xg.default = c(
     "area_total_finished",
     "area_unknown", 
     "area_base",
-    "area_basement",
     "area_firstfloor_finished",
+    "deck",
+
     "date",
-    "tract_number",
+    #"tract_number",
     "quality",
     "framing",
     "architectural_style",
     "region_neighbor",
-    "tract_block"
+    #"tract_block"
 )
 
 features.logtransformed.xg.default = c(
