@@ -41,3 +41,16 @@ h2o.grid.helper = function(
         ...
     )
 }
+
+modelListFromGrids = function(grid_id_prefix, N) {
+    doc = "
+    This utility was useful for extracting the models from multiple grids
+    with grid id as grid_id_prefix and 1:N as suffix
+    "
+    sapply(X=1:N,
+           FUN=function(x) {
+               grid.ids = h2o.getGrid(paste(grid_id_prefix, x, sep=''))
+               sapply(X=grid.ids@model_ids, FUN=h2o.getModel)
+           })
+}
+
