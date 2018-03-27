@@ -1,5 +1,5 @@
 ---
-title: Tuning the GBM learning rate
+title: Tuning the GBM tree depth
 author: "Sidharth Gupta"
 date: \today
 output:
@@ -24,27 +24,25 @@ header-includes:
 - \usetikzlibrary{matrix}
 ---
 
-```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE, results='hide'}
+```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE}
 library(dplyr)
 library(magrittr)
 library(gridExtra)
 library(ggplot2)
 library(h2o)
 library(gridExtra)
-library(futile.logger)
 source("h2o/source-for-rmd.R")
-h2o.init()
 ```
 
-Tuning the learning rate. First lets prepare some data
+# Now that the learning rate is sort of decided we want to tune the tree depth.
 
-```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=FALSE, results='hide'}
-# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
+# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function. 
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 
 independent.vars = colnames(tr.baseline %>% select(-logerror))
 
-list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror")
+list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror") 
 
 XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
 XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
@@ -55,15 +53,15 @@ XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
 Now lets create a grid that only varies the learning rate only. We choose a large number of trees. But becasue we have early stopping we should be ok.
 
 ```{r hyperparams_search_crit}
-hyper_params_search_crit.learnrate.tune = function(
+hyper_params_search_crit.depth.tune = function(
             ntrees_opts = 10000, # early stopping will stop the earlier.
             max_depth_opts = 10,  # Start with 6 for now
             min_rows_opts = 5,   # How many leaf nodes to average over, doing the log of # rows would be ok
-            learn_rate_opts = 0.01,
-            learn_rate_annealing = 1,
+            learn_rate_opts = 0.01, # Chosen from last notebook on learning rate
+            learn_rate_annealing = 0.995, # Chosen from last notebook
             sample_rate_opts = 0.9,
             col_sample_rate_opts = 0.9,
-            col_sample_rate_per_tree_opts = 0.9,
+            col_sample_rate_per_tree_opts = 0.9, 
             strategy="RandomDiscrete") {
 
     list[search_criteria, hyper_params] =  hyper_params_search_crit(
@@ -75,7 +73,7 @@ hyper_params_search_crit.learnrate.tune = function(
             sample_rate_opts = sample_rate_opts,
             col_sample_rate_opts = col_sample_rate_opts,
             col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts,
-            strategy=strategy)
+            strategy=strategy) 
     return(list(search_criteria, hyper_params))
 }
 
@@ -85,14 +83,14 @@ hyper_params_search_crit.learnrate.tune = function(
 Here is the wrapper written to do the model fit.
 ```{r}
 
-baseline.fit = function(hp, sc, grid_id = "learning_rate_search", seed=123456) {
+baseline.fit = function(hp, sc, grid_id = "depth_search", seed=123456) {
         h2o.grid.helper(
-                        XYTrain.h2o,
-                        XYTest.h2o,
+                        XYTrain.h2o, 
+                        XYTest.h2o, 
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
-                        algorithm="gbm",
+                        algorithm="gbm", 
                         grid_id=grid_id,
                         seed = seed
                         )
@@ -102,34 +100,29 @@ baseline.fit = function(hp, sc, grid_id = "learning_rate_search", seed=123456) {
 Now lets train a few models. We train a few models a few times to compare learning rates
 
 ```{r training, cache=TRUE}
-set.seed(123456)
-NGrids = 15
-target_learning_rates = seq(0.01, 0.05, 0.01)
-list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate] =
-    hyper_params_search_crit.learnrate.tune(learn_rate_opts=target_learning_rates)
-fits = sapply(X = 1:NGrids,
+set.seed(123456) 
+NGrids = 1 # Just train the model once
+max_depth_opts = seq(1:15)
+learn_rate_opts = c(0.01, 0.02)
+list[search_criteria.gbm.depth, hyper_params.gbm.depth] = hyper_params_search_crit.depth.tune(
+                                                                      max_depth_opts=max_depth_opts, 
+                                                                      learn_rate_opts=learn_rate_opts)
+fits = sapply(X = 1:NGrids, 
               FUN=function(x) baseline.fit(
-                       hp=hyper_params.gbm.learnrate,
-                       sc=search_criteria.gbm.learnrate,
-                       grid_id = paste("learning_rate_search_", x, sep=''),
+                       hp=hyper_params.gbm.depth, 
+                       sc=search_criteria.gbm.depth, 
+                       grid_id = paste("depth_search_", x, sep=''), 
                        seed = as.integer(runif(1, 1e5, 1e6))))
 ```
 
-Extract the models from each grid in an list of lists. Note here that each grid has `length(target_learning_rates)` GBM models.
-```{r modellist, results='hide', cache=TRUE}
+So how do the learning curves look for each fit? First extract the score histories of each of the models
+```{r modellist, results='hide'}
 # A list of lists of all the trained models
-
 models.lst = sapply(X=1:NGrids,
                     FUN=function(x) {
-                        grid.ids = h2o.getGrid(paste("learning_rate_search_", x, sep=''))
+                        grid.ids = h2o.getGrid(paste("depth_search_", x, sep=''))
                         sapply(X=grid.ids@model_ids, FUN=h2o.getModel)
                     })
-print(dim(models.lst))
-```
-
-First extract the score histories of each of the models into a data frame
-and stuff them into a list.
-```{r}
 
 getRMSEScoreHistory = function (models) {
     # Given a list of model ids get a data frame with its RMSE score history
@@ -139,17 +132,20 @@ getRMSEScoreHistory = function (models) {
     for (i in 1:length(models)) {
         model.rmse = h2o.rmse(h2o.performance(models[[i]]))
         lr = models[[i]]@parameters$learn_rate
+        # For some reason there was no max_depth parameter in the parameters list of the model
+        # This is probably a bug
+        max_depth = models[[i]]@model$model_summary$max_depth
         df.grid = rbind(df.grid, c(lr, model.rmse))
-        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>%
-            data.frame %>%
+        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>% 
+            data.frame %>% 
             pull(validation_rmse)
         score.history = rbind(score.history,
                               data.frame(
-                                         ntrees = 1:length(model.rmse.rate),
-                                         rmse = model.rmse.rate,
+                                         ntrees = 1:length(model.rmse.rate), 
+                                         depth=rep(max_depth, length(model.rmse.rate)),
+                                         rmse = model.rmse.rate, 
                                          id = i,
-                                         lr = lr,
-                                         id = paste("model_", i, "_lr_", lr, sep='')
+                                         lr = lr
                                          )
                               )
     }
@@ -158,15 +154,17 @@ getRMSEScoreHistory = function (models) {
 
 # Sanity check: each column is one grid. There are NGrids grids
 # and each grid has length(target_learning_rates) models
-assertthat::assert_that(nrow(models.lst) == length(target_learning_rates))
+assertthat::assert_that(nrow(models.lst) == length(max_depth_opts)*length())
 assertthat::assert_that(ncol(models.lst) == NGrids)
 
 # For each model list in models.lst extract the histories
-score.history.lst = sapply(X = 1:NGrids,
-                           function(x) getRMSEScoreHistory(models.lst[, x]))
+score.history.lst = sapply(X = 1:NGrids, 
+                           function(x) getRMSEScoreHistory(models.lst[, x])) 
+
 ```
 
-So how do the learning curves look for each grid? Lets plot them.
+Retriving the Score history
+
 ```{r scoreHistory, results='markup'}
 # The axes limits
 
@@ -181,8 +179,9 @@ score.history.combined =
     )
 ```
 
+
 Plot em!
-```{r plots, fig.width=10, fig.height=10}
+```{r plots, fig.width=10, fig.height=15}
 
 # I initially tried working with a lits of plots instead of plotting the data directly. Had trouble sizing the plots properly. So backed off and instead used a combined version of score history with vanialla ggplot.
 min_y_lim = min(sapply(1:NGrids,
@@ -197,37 +196,30 @@ max_y_lim = max(sapply(1:NGrids,
                                data.frame %>%
                                pull(rmse) %>% max
                        }))
+
+score.history.combined %<>% group_by(depth, lr) %>%  mutate(min_rmse_by_depth =  min(rmse)) %>% ungroup
+
 ggplot(score.history.combined) +
-    facet_wrap(~ grid_id, ncol=2) +
-        geom_line(aes(y=rmse, x=ntrees, color=as.factor(lr)),
+    facet_wrap(~ depth, ncol=2) +
+        geom_line(aes(y=rmse, x=ntrees, 
+                      color=as.factor(lr)),
                   position=position_dodge(1)) +
+        geom_hline(aes(yintercept = min_rmse_by_depth, color=as.factor(lr)), size=0.6, alpha=0.5) +
         ylim(c(min_y_lim, max_y_lim)) +
         theme(
           legend.position="bottom",
           strip.background = element_blank(),
-          strip.text.x = element_blank()
-        )
+          strip.text.x = element_text(size=6)
+        ) + guides(col=guide_legend(title="learning_rate", position="bottom"))
 
 ```
-
-It seems clear that 13/15 of the curves the learning curves corresponding to 0.01-0.02 end up lower without the validation error overshooting.
+So clearly the learning rate of 0.02 is beating out 0.01 and the optimum depth of it seems to be 10-14
+as you can see by the horizontal lines. 6 out of the top 10 learning rates are 0.02:
 
 ```{r}
-score.history.combined %>% group_by(grid_id, lr) %>% 
-    dplyr::filter(ntrees==max(ntrees)) %>%
-    data.frame %>% group_by(grid_id) %>% 
-    dplyr::filter(rmse ==min(rmse)) %>%
-    arrange(rmse)
 
+g11 = h2o.getGrid("depth_search_1", sort_by="RMSE")
+g11@summary_table %>% select(learn_rate, max_depth, rmse) %>% data.frame
 ```
 
-But the lowest RMSEs do have some values for higher learning rates.
-```{r}
-score.history.combined %>% 
-    group_by(grid_id) %>% 
-    dplyr::filter(rmse == min(rmse)) %>% 
-    data.frame %>% 
-    arrange(rmse)
-```
-
-
+These are the parameters that shall be used in the grid search.
