@@ -5,10 +5,10 @@ library(dplyr)
 source("smoother.R")
 
 getBuildingFeatures = function() {
-    # POSSIBLE IMPROVEMENT: encapsulate features a bit more
+    # TODO: encapsulate building specific features
 }
 getNeighborhoodFeatures = function() {
-    # POSSIBLE IMPROVEMENT: encapsulate features a bit more
+    # TODO: encapsulate features a bit more
 }
 
 makePropertiesFeaturesReadable = function(properties) {
@@ -68,7 +68,7 @@ makePropertiesFeaturesReadable = function(properties) {
 }
 
 makeTransactionFeaturesReadable = function(transactions) {
-    transactions %>% makePropertiesFeaturesReadable() %>% dplyr::rename(
+    transactions %>% dplyr::rename(
       id_parcel = parcelid,
       date = transactiondate
     )
@@ -92,20 +92,23 @@ transformFeaturesForLinearRegression = function(
     # must also happen for a proper subset of the chosen ones only.
     # Must be in among the chosen ones.
     # and must be in the data as well.
-
-
+    flog.info(paste("Log Transforming:\n\t", paste(txn.features, collapse="\n\t"), 
+              "\n"))
     for(f in txn.features) {
         if(!f %in% colnames(data)) {
-            print(paste("** WARN: feature ",f, " requested for log transform but not in data. Skipping."))
+            print(paste("** STOP: feature ",f, " requested for log transform but not in data. Skipping."))
+            stopifnot(T)
             next
         }
         data %<>%
             dplyr::mutate(!!f := log(!!quo(!!as.name(f)))) %>%
+            # if the feature is infinite replace it with 0
             dplyr::mutate(!!f := ifelse(is.infinite(!!quo(!!as.name(f))), 0, !!quo(!!as.name(f))))
     }
     return(data)
 }
-
+# These impact coding routines predate the use of vtreat, which does a lot of heavy lifting.
+# These may still be useful though in the future
 impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
     xcol.name.new.enquo = enquo(xcol.name.new)
     depvar.name.enquo = enquo(depvar.name)
@@ -114,6 +117,7 @@ impactCoding = function(data, xcol.name, xcol.name.new, depvar.name=logerror) {
     m = applyImpactModel(condProbModel, data %>% pull(!!xcol.name.enquo))
     data %<>% dplyr::mutate(!!quo_name(xcol.name.new.enquo) := m)
 }
+
 # Impact coding routines: WARNING may introduce bias in the model.
 impactModel = function(xcol, depvar) {
     # xcol is your categorical variable and depvar is the variable that will be
@@ -151,7 +155,7 @@ createCrossFrameTreatment = function(
         #smFactor=0.01, # vary these for tuning
         #rareSig=0.01,
         #rareCount=10,
-        vtreat.grid,
+        vtreat.grid, # 
         YName = "logerror",
         makeLocalCluster=F,
         crossFrameCluster=NULL) {
@@ -249,8 +253,7 @@ applyCrossFrameToX = function(
     return(XTreated)
 }
 
-engineerFeatures = function(X, bys = c("region_city", "region_county", "region_zip"),
-                            avg.bys=c("region_city", "region_zip", "region_county")) {
+taxByAreaTransform = function(X) { #, avg.bys=c("region_city", "region_zip", "region_county")) {
     # Average features for tax assesed and property taxes
     # There are two types of tax assessments:
     # - One for the land area of the parcel: tax_land
@@ -261,21 +264,18 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
     # remove the per sq feet average features by zip/county/city.
     # remote mean tax features per city/county/zip
     before = colnames(X)
-    #X %<>% dplyr::group_by(region_city) %>% dplyr::mutate(tax_total_city = mean(tax_total, na.rm=T)) %>% ungroup()
-    #X %<>% dplyr::group_by(region_zip) %>%  dplyr::mutate(tax_total_zip = mean(tax_total, na.rm=T)) %>% ungroup()
-    #X %<>% dplyr::group_by(region_county) %>%  dplyr::mutate(tax_total_cty = mean(tax_total, na.rm=T)) %>% ungroup()
 
-    meanBy = function(XTemp, fs, ftarget) {
-        for(f in fs) {
-            ftarget_by_f = paste(ftarget, "_", f, sep="")
-            ftarget.quo = quo(!!as.name(ftarget))
-            XTemp %<>%
-                dplyr::group_by_(.dots=c(f)) %>%
-                dplyr::mutate(!!ftarget_by_f := mean(!!ftarget.quo, na.rm=T)) %>%
-                ungroup()
-       }
-       return(XTemp)
-    }
+    #meanBy = function(XTemp, fs, ftarget) {
+    #    for(f in fs) {
+    #        ftarget_by_f = paste(ftarget, "_", f, sep="")
+    #        ftarget.quo = quo(!!as.name(ftarget))
+    #        XTemp %<>%
+    #            dplyr::group_by_(.dots=c(f)) %>%
+    #            dplyr::mutate(!!ftarget_by_f := mean(!!ftarget.quo, na.rm=T)) %>%
+    #            ungroup()
+    #   }
+    #   return(XTemp)
+    #}
 
     #################################################################
     ############# The tax total assessd value  #####################
@@ -290,10 +290,10 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
 
 
     # And there county city and zip meand
-    if(length(avg.bys) > 0) {
-        X %<>% meanBy(avg.bys, "tax_assd_persqfeet_living")
-        X %<>% meanBy(avg.bys, "tax_assd_perroom")
-    }
+    #if(length(avg.bys) > 0) {
+    #    X %<>% meanBy(avg.bys, "tax_assd_persqfeet_living")
+    #    X %<>% meanBy(avg.bys, "tax_assd_perroom")
+    #}
     #################################################################
     ############# The property taxes ###############################
     #################################################################
@@ -301,11 +301,11 @@ engineerFeatures = function(X, bys = c("region_city", "region_county", "region_z
     #X %<>% dplyr::mutate(tax_prop_persqfeet_lot=tax_property/area_lot)
     X %<>% dplyr::mutate(tax_prop_perroom = tax_property/(num_room+1))
     # And their) > g county, city and zip means
-    if(length(avg.bys) > 0) {
-        X %<>% meanBy(avg.bys, "tax_prop_persqfeet_living")
-        X %<>% meanBy(avg.bys, "tax_prop_perroom")
-    }
-    proposed_removal = c("tax_property", "tax_total", "area_live_finished")
+    #if(length(avg.bys) > 0) {
+    #    X %<>% meanBy(avg.bys, "tax_prop_persqfeet_living")
+    #    X %<>% meanBy(avg.bys, "tax_prop_perroom")
+    #}
+    proposed_removal = c("tax_property", "tax_total")
     return(list(X, setdiff(colnames(X), before), proposed_removal))
 }
 
@@ -470,63 +470,3 @@ naImpute = function(properties, feature, impute_val) {
     properties %>% dplyr::mutate_at(vars(feature), funs(ifelse(is.na(.), impute_val, .)))
 }
 
-round1ImputeHelper = function(df, var_name, mutate_call) {
-    # Mak a mutate_call like: interp(~ifelse(region_county==county & is.na(var), 0, var), county=2061, var=as.name("area_garage"))
-    df %<>% dplyr::mutate_(.dots=setNames(mutate_call, var_name))
-    # Given a number of fields and their values we want to impute values for them
-}
-
-round1Impute = function(df) {
-    # Simply impute 0 for na for certain (county subset, feature) pair
-    createRule = function (counties, var_name) {
-            interp(~ifelse(region_county %in% counties & is.na(x), 0, x), x=as.name(var_name))
-
-    }
-    # TODO: consider using a "selector" to test various imputations.
-    imputeRules = list(
-            #area_garage=createRule(c(1286, 2061), "area_garage"),
-            #area_basement=createRule(c(2061), "area_basement"),
-            #deck=createRule(c(2061), "deck"),
-            #flag_fireplace = createRule(c(1286), "flag_fireplace"),
-            #area_patio = createRule(c(2061), "area_patio"),
-            #area_pool = createRule(c(2061), "area_pool"),
-            #area_shed = createRule(c(2061), "area_shed"),
-            #framing = createRule(c(3101), "framing"),
-            #num_pool = createRule(c(1286, 2061, 3101), "num_pool"),
-            #num_fireplace = createRule(c(1286, 2061), "num_fireplace"),
-            #num_garage = createRule(c(1286, 2061), "num_garage"),
-            tax_delinquency_year = createRule(c(1286, 2061, 3101), "tax_delinquency_year"),
-            tax_delinquency = createRule(c(1286, 2061, 3101), "tax_delinquency")
-    )
-    for(n in names(imputeRules)) {
-        df = round1ImputeHelper(df, n, imputeRules[n])
-    }
-    return(df)
-    # area_garage       Impute 0 for CT 1286, 2061
-    # area_basement     Impute 0 for 2061 county in place of NA.
-    # deck		Impute 0 for 2061 only.
-    # flag_fireplace    Impute 0 for NA county 1286 only.
-    # area_patio        Impute 0 for NA county 2061 only
-    # area_pool		Impute 0 for NA county 2061 only
-    # area_shed		Impute 0 for NA county 2061 only
-    # framing		Impute 0 for NA for 3101 only.
-    # num_pool		Impute 0 for NA in all counties
-    # num_fireplace     Impute 0 for NA in county 1286, 2061 only.
-    # num_garage        Impute 0 for NA in county 1286, 2061 only.
-    # tax_delinquency_year		Impute 0 for NA.
-}
-
-# TODO: impute for heating and aircon by kNN. Use the zerodist to impute as much as I can.
-# TODO: drop the "story" property and use the "area_basement" instead. Impute 0 where this property is missing. See the captains log for why basements are sparse in SoCAL
-# TODO: drop architectural_style if I haven't already.
-# TODO: drop material for now as I am not sure imputing is of any use.
-# TODO: for tax properties like tax_total, tax_land and tax_property. I can try and use the kNN for not just distance but other features in the space: longitude, latitude, area_firstfloor_finished, area_total_calc, num_bathroom, num_bedroom, year_built, tax_property, tax_land, tax_total, unitcnt
-# TODO: Impute same value for region_county and region_neighbor by just knn on long lat.
-# TODO: Impute same value for num_garage, area_garage features using zerodist thingy.
-# TODO: Impute num_stories to use same value using zerodist.
-# TODO: We drop pooltypeid2 and pooltypeid7 and poolcnt is retained as num_pool. We impute value using zerodist and then replace NA with 0.
-# TODO: poolidtype10 and hashottuborspa seem to reflect the same property but not sure which one is better. Compare these
-
-# Order of imputation: First impute the region_county and region_neighbour proprerties.
-
-# NOTED: Issue with imputation using lat long in properties: 11437 rows in properties are not having longitude and latitude and region_county property.

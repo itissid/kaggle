@@ -1,17 +1,30 @@
 library(h2o)
-# Strategy to tune the boosting models
+source("utils.R")
+source("datadefs.R")
+# Strategy 1 to tune the boosting models
 # 1. Start with a short number of trees like 100  and tune the learning rate: [2-10]/trees.
 #     Observe the curve of the training metric to figure out the learning rate 
 # 2. Once you have a good hold of learning rate we can try tuning the tree depth. 
 # 3. And then the rest of the parameters
+
+# March 23rd 2018: Another strategy to tune these trees is as follows:
+# https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/tutorials/gbm/gbmTuning.Rmd
+# First decide on the number of trees by selecting a low learning rate(0.02). Use a stopping 
+# Once the number of trees are determined(depending on what the algorithm selected) one can tune the other params
+#####################################
+##### NOTE: Early stopping for individual trees and the total algorithm are different: https://groups.google.com/forum/#!topic/h2ostream/xgVU3scBb7w
+####################################
 hyper_params_search_crit = function(
-            ntrees_opts = 1000,       # early stopping will stop the earlier.
-            max_depth_opts = 6, # Start with 6 for now
-            min_rows_opts = 5, # How many leaf nodes to average over, doing the log of # rows would be ok
-            learn_rate_opts = seq(0.01, 0.1, 0.02),
+            # Defaults are meant for tuning the learning rate
+            ntrees_opts = 1000,
+            max_depth_opts = 6,
+            min_rows_opts = 5, 
+            learn_rate_opts = 0.01,
+            learn_rate_annealing = 0.995,
             sample_rate_opts = 0.8,
             col_sample_rate_opts = 0.8,
-            col_sample_rate_per_tree_opts = 0.8) {
+            col_sample_rate_per_tree_opts = 0.8,
+            strategy="Cartesian") {
             # Creates Hyper parameters for GBM
             # no categorical features in this dataset
             #nbins_cats_opts = seq(100,10000,100)
@@ -21,28 +34,29 @@ hyper_params_search_crit = function(
                          max_depth = max_depth_opts,
                          min_rows = min_rows_opts,
                          learn_rate = learn_rate_opts,
+                         learn_rate_annealing=learn_rate_annealing,
                          sample_rate = sample_rate_opts,
                          col_sample_rate = col_sample_rate_opts,
                          col_sample_rate_per_tree = col_sample_rate_per_tree_opts
-                         #,nbins_cats = nbins_cats_opts
     )
-    search_criteria = list(strategy = "RandomDiscrete",
+
+    search_criteria = list(
+                       strategy = strategy,
                        max_runtime_secs = 5000,
-                       max_models = 200,
-                       stopping_metric = "RMSE",
-                       stopping_tolerance = 1e-4, 
-                       stopping_rounds = 5,
-                       seed = 123456)
+                       max_models = 200
+                      )
     return(list(search_criteria, hyper_params))
 }
 
-# Once we have a handle on the learning rage lets
+
+# Once we have a handle on the learning rage lets figure out the depth
 hyper_params_search_crit.depth = function(
             # Creates Hyper parameters for Just varying the depth, because that seemed to be the only important one after you adjust for the
-            ntrees_opts = 1000,
+            ntrees_opts = 10000,
             max_depth_opts = c(2, 12, 2),
             min_rows_opts = 5,
-            learn_rate_opts = 0.01, # from the previous
+            learn_rate_opts = 0.02,
+            learn_rate_annealing = 0.995,
             sample_rate_opts = 0.8,
             col_sample_rate_opts = 0.8,
             col_sample_rate_per_tree_opts = 0.8) {
@@ -90,6 +104,56 @@ list[search_criteria.gbm.default, hyper_params.gbm.default] =  hyper_params_sear
 list[search_criteria.gbm.depth, hyper_params.gbm.depth] =  hyper_params_search_crit.depth()
 list[search_criteria.gbm.final, hyper_params.gbm.final] =  hyper_params_search_crit.final()
 
+prepareDataWrapper.h2o.gbm.baseline = function(
+                       tr="inputs/train_2016_v2.csv",
+                       pr="inputs/properties_2016.csv",
+                       log.transform=T, # Log transformation of 
+                       remove.outliers=F,
+                       outlier.range=c(-0.4, 0.4),
+                       omit.nas=F,
+                       do.vtreat=F,
+                       keep.dates=F, # should we keep dates in the training data set
+                       dates.to.numeric=F, # Convert the transaction dates to numeric
+                       categorical.to.numeric=F, # h2o does this by default: https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/data-science/xgboost.rst
+                       convert.to.categorical=T, # but convert some of these features to categorical so that h2o handles it properly
+                       taxbyarea.normalize=F,
+                       large.missing.features.prune=F, # h2o's docs says it treats missing data as information. So we won't delete rows 
+                       missing.feature.cutoff.frac = 1,
+                       features.excluded=features.excluded.xg.default,
+                       # Convert to factors carefully
+                       features.categorical=features.categorical.xg.default,
+                       features.logtransformed=features.logtransformed.xg.default,
+                       features.vtreat.treated=features.treated.vtreat.xg.default,
+                       vtreat.opts=list()) {
+    # From utils
+    list[transactions, properties, testVtreatFn, tplan] = prepareData(
+         tr=tr,
+         pr=pr,
+         log.transform=log.transform,
+         large.missing.features.prune=large.missing.features.prune,
+         missing.feature.cutoff.frac = missing.feature.cutoff.frac,
+         remove.outliers=remove.outliers,
+         outlier.range=outlier.range,
+         omit.nas=omit.nas,
+         do.vtreat=do.vtreat, 
+         categorical.to.numeric=categorical.to.numeric,
+         convert.to.categorical=convert.to.categorical,
+         taxbyarea.normalize=taxbyarea.normalize,
+         vtreat.opts=vtreat.opts,
+         features.excluded=features.excluded,
+         features.logtransformed=features.logtransformed,
+         features.vtreat.treated=features.vtreat.treated,
+         features.categorical=features.categorical
+         )
+
+    # The dates are to be treated as numeric features for  
+    if(dates.to.numeric)
+        transactions %<>% mutate(date = as.numeric(as.factor(date)))
+    if(keep.dates == F)
+        transactions %<>% select(-date)
+    return(list(transactions, properties, testVtreatFn, tplan))
+}
+
 # TODO: Use h2o-utils to dedup this code
 gbm.grid = function(
                     XY, YName="logerror", 
@@ -115,38 +179,13 @@ gbm.grid = function(
         grid_id=grid_id , 
         algorithm="gbm",
         keep_cvpreds=keep_cvpreds)
-    #h2o.grid (
-    #  ## hyper parameters
-    #  hyper_params = hyper_params,
-
-    #  ## full Cartesian hyper-parameter search
-    #  search_criteria = search_criteria,
-
-    #  ## which algorithm to run
-    #  algorithm="gbm",
-
-    #  ## identifier for the grid, to later retrieve it
-    #  grid_id=grid_id,
-
-    #  ## standard model parameters
-    #  x = independentCols,
-    #  y = YName,
-    #  training_frame = XYTrain.h2o,
-    #  validation_frame = XYTest.h2o,
-    #  keep_cross_validation_predictions = keep_cvpreds,
-    #  ## fix a random number generator seed for reproducibility
-    #  seed = 123456,
-
-    #  ## score every 10 trees to make early stopping reproducible (it depends on the scoring interval)
-    #  score_tree_interval = 10
-    #)
 }
 
 # Use the gbm model to do some predictions from the grid like so:
 # grid =  gbm.grid(..., grid_id="test_grid", ...)
 # sortedGrid = h2o.getGrid("test_grid", sort_by="RMSE", decreasing = TRUE)
 # gbm <- h2o.getModel(sortedGrid@model_ids[[1]])
-# createPredictions
+#
 
 createPredictionsFromModel = function(gbm.model, X, rlist) {
         getDateCode = function(d, rlist) {rlist$date %>% dplyr::filter(date==as.Date(d)) %>% dplyr::pull(date_coded)}

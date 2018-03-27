@@ -1,71 +1,104 @@
 library(magrittr)
 library(lazyeval)
+library(futile.logger)
 source("datadefs.R")
+source("utils/io.R")
+source("utils/spatial.R")
+source("features.R")
 source("https://raw.githubusercontent.com/ggrothendieck/gsubfn/master/R/list.R")
 
 #properties with high 75th percentile of the abs_error.
 
-readAndTransformData = function(pr='inputs/properties_2016.csv', tr = 'inputs/train_2016_v2.csv') {
+readAndRenameFeatures = function(pr='inputs/properties_2016.csv', tr = 'inputs/train_2016_v2.csv') {
+    # Minimal processing of features to make them more human readable
 
     properties <- readPropertiesFile(pr)
     transactions <- readPropertiesFile(tr)
     #sample_submission <- data.table::fread('inputs/sample_submission.csv')
     properties %<>% makePropertiesFeaturesReadable()
-    transations %<>% makeTransactionFeaturesReadable()
+    transactions %<>% makeTransactionFeaturesReadable()
     # Split the census raw data into meaningful categories
     properties %<>%
         dplyr::mutate(census = as.character(rawcensustractandblock),
                tract_number = as.numeric(stringr::str_sub(census,5,11)),
                tract_block = as.numeric(stringr::str_sub(census,12)))
-    return(list(transactions %>% dplyr::left_join(properties, by="id_parcel"), properties))
+    return(list(transactions,  properties))
 }
 
+missing_fn = function(pr, variable) {
+	 variable_enquo = enquo(variable)
+	 pr %>%
+             group_by(region_county) %>%
+             summarize(not_missing = sum(!is.na(!!variable_enquo)),
+                       missing_pct=sum(is.na(!!variable_enquo))/n())
+}
 
+# Convenience function to copy text to OSX clipboard
+copy_to_clip = function(obj) {
+    clip <- pipe("pbcopy", "w")
+    write.table(obj, file=clip, sep='\t\t', quote = F, row.name=F)
+    close(clip)
+}
+# A Wrapper function that combines several steps into one:
+# 1. read the data,
+# 2. rename the columns to human readable form
+# 3. Clean up the data: Remove outliers, remove rows with certain amounts of missing data. etc
+# 3. Do basic feature engineering: Log Transformation, Using vtreat, convert features to factors
+# This routine is called by other algorithms and those are the ones that set the default.
 prepareData = function(
-                       recode_chars=T,
+                       pr='inputs/properties_2016.csv',
+                       tr = 'inputs/train_2016_v2.csv',
+                       ### Feature engineering ###
                        log.transform=T,
                        large.missing.features.prune=T,
+                       do.vtreat=F,
+                       taxbyarea.normalize=F,
+                       vtreat.opts=list(),
+                       features.logtransformed=c(),
+                       features.vtreat.treated=c(), # WITH vtreat
+                       categorical.to.numeric=T,
+                       convert.to.categorical=F,
+                       features.categorical, # which features to convert to factors
+                       #### Data cleanup ####
                        missing.feature.cutoff.frac = 0.10,
                        remove.outliers=T,
                        outlier.range=c(-0.4, 0.4),
                        omit.nas=F,
-                       do.vtreat=F,
-                       engineer.features=F,
-                       avg.bys=c("region_city","region_county", "region_zip"),
-                       vtreat.opts,
-                       features.excluded,
-                       features.logtransformed,
-                       features.vtreat.treated, # WITH vtreat
-                       do.factor.conversion,
-                       features.categorical
+                       features.excluded=c()
                        ) {
 
     # Renames columns to be more reasonable,
     # puts lats and logs in correct format
     # converts all chars in props and trans to integers. And converts the feature.categorical to factors
     # Optionally log transforms the large area_ and tax_ features
-    list[transactions, properties] = readAndTransformData()
-    transactions %<>%transformCoords()
-    properties %<>% transformCoords()
-    print(".")
+    list[transactions, properties] = readAndRenameFeatures(pr, tr)
+    transactions.tmp = transactions
+    properties.tmp = properties
+    properties.tmp %<>% transformCoords()
+    flog.debug(str(properties.tmp[, 1:5]))
+    flog.debug(".")
 
     # Recode all char data into numerics converting their missing vals(blanks, empty strings into )
-    if(recode_chars == T) {
-        list[transactions.enc, properties.enc, recode_list] = recodeCharacterColumns(transactions, properties)
-    } else {
-        recode_list = NULL
+    if(convert.to.categorical==T) {
+        properties.tmp %<>%
+            mutate_at(vars(features.categorical), funs(as.factor(.)))
     }
+    if(categorical.to.numeric == T) {
+        flog.debug(paste("*** Converting following categorical variables to numeric: ", paste(features.categorical, collapse=', ')))
+        properties.tmp %<>%
+            mutate_at(vars(features.categorical), funs(as.numeric(as.factor(.))))
+    }
+    flog.debug(str(properties.tmp[, 1:5]))
+    #if(recode_chars == T) {
+    #    list[properties.enc, props.recode_list] = recodeCharacterColumns(properties)
+    #    list[transactions.enc, tran.recode_list] = recodeCharacterColumns(transactions, features=c("date"))
+    #} else {
+    #    recode_list = NULL
+    #}
     # Impute some common sense variables
-    transactions_cleaned = transactions.enc %>% round1Impute()
-    properties_cleaned = properties.enc %>% round1Impute()
+    # transactions.tmp = transactions.enc %>% round1Impute()
+    # properties.tmp = properties.enc %>% round1Impute()
 
-    if(do.factor.conversion == T && length(features.categorical) > 0) { # May often be excluded from lm due to data set size.
-        transactions_cleaned %<>% dplyr::mutate_at(dplyr::vars(features.categorical), as.factor)
-        properties_cleaned %<>% dplyr::mutate_at(dplyr::vars(setdiff(features.categorical, "date")), as.factor)
-    } else {
-        print("** Not converting any features to factors. do.factor.conversion is set to false or no
-              categorical features specified")
-    }
     #########################################################################
     ############### GET THE TREATMENTS BEFORE YOU DO ANYTHING ELSE ##########
     #########################################################################
@@ -73,113 +106,101 @@ prepareData = function(
         if(log.transform == T) {
             shouldnotbehappening = intersect(features.logtransformed, features.vtreat.treated)
             if(length(shouldnotbehappening) > 0) {
-                print(paste("features that are treated cannot be log transformed",
+                flog.warn(paste("features that are treated cannot be log transformed",
                             paste(shouldnotbehappening, sep=", ")))
             }
         }
 
-        list[tplan, trainVtreat, testVtreatFn] = prepareDataFeaturesWithVtreat(transactions_cleaned, features.vtreat.treated, vtreat.opts)
-        print("..")
+        list[tplan, trainVtreat, testVtreatFn] = prepareDataFeaturesWithVtreat(transactions.tmp, features.vtreat.treated, vtreat.opts)
+        flog.debug("..")
 
-        train.features.excluded = union(features.excluded, features.vtreat.treated)
-        test.features.excluded = features.excluded
+        features.excluded = features.excluded
         # add all the features that are treated already to the exclusion thingy
-        print(paste("***", length(features.vtreat.treated), "features are additionally excluded from preprocessing due to vtreat treatment: ",
+        flog.info(paste("***", length(features.vtreat.treated), "features are additionally excluded from preprocessing due to vtreat treatment: ",
                     paste(features.vtreat.treated, collapse=", ")))
     } else{
-        testVtreatFn = function(x){x}
-        train.features.excluded = features.excluded
-        test.features.excluded = features.excluded
+        testVtreatFn = function(x){x} # Dummy function
         tplan=NULL
     }
     #######################################################################
     ######### Feature engineering before log xfrm, but after vtreat    ####
     #######################################################################
-    if(engineer.features == T) {
-        list[transactions_cleaned, features.engineered, rm.prop] = engineerFeatures(
-                                transactions_cleaned, avg.bys=avg.bys)
-        list[properties_cleaned, XXX__, YYY__] = engineerFeatures(
-                              properties_cleaned, transactions_cleaned, avg.bys=avg.bys)
-        print(paste("Added", length(features.engineered), " engineered features:"))
-        print(paste(features.engineered, collapse=", "))
-        test.features.excluded = c(test.features.excluded, rm.prop)
-        train.features.excluded = c(train.features.excluded, rm.prop)
+    if(taxbyarea.normalize == T) {
+        list[properties.tmp, taxbyarea.normalize.added, rm.prop] = taxByAreaTransform(
+                              properties.tmp)
+        flog.debug(paste("Added", length(taxbyarea.normalize.added), " engineered features:"))
+        flog.debug(paste(paste(taxbyarea.normalize.added, collapse="\n\t"), "\n"))
+        features.excluded = c(features.excluded, rm.prop)
     }
+    flog.debug(str(properties.tmp[, 1:5]))
 
     #######################################################################
     ######### Scale the variables that are orders of magnitude larger. ####
     #######################################################################
     if(log.transform == T) {
-        transactions_cleaned = transactions_cleaned  %>% transformFeaturesForLinearRegression(features.logtransformed)
-        print("")
-        properties_cleaned = properties_cleaned %>% transformFeaturesForLinearRegression(features.logtransformed)
+        properties.tmp = properties.tmp %>% transformFeaturesForLinearRegression(features.logtransformed)
     } else {
-        print(" NO LOG TRANSFORMATIONS SELECTED..")
+        flog.debug("*** NO LOG TRANSFORMATIONS SELECTED..")
     }
 
+    flog.debug(str(properties.tmp[, 1:5]))
     #######################################################################
-    #################### NOW WE DO ALL THE FEATURE PRUNING ###################
+    #################### NOW WE DO THE FEATURE PRUNING ###################
     #######################################################################
-    if(length(train.features.excluded) >0) {
-        transactions_dates = transactions_cleaned %>% dplyr::select(date)
-        transactions_cleaned %<>% dplyr::select(-dplyr::one_of(train.features.excluded))
-    }
 
-    if(length(test.features.excluded) > 0) {
-        # Don't remove the vtreat features. the treatment is not applied to the data set until the end
-        properties_cleaned %<>% dplyr::select(-dplyr::one_of(setdiff(test.features.excluded, "id_parcel")))
-    }
-
-
-    pruneFeatures = function(X, missing.feature.cutoff.frac=0.12) {
+    pruneFeatures = function(X, missing.feature.cutoff.frac) {
         # Choose features by excluding ones that have NA > cutoff
         features = X  %>%
             dplyr::summarize_all(dplyr::funs(sum(is.na(.))/n())) %>%
-            tidyr::gather(key="feature", value="missing_pct") %>% dplyr::arrange(missing_pct) %>%
-            dplyr::filter(missing_pct<missing.feature.cutoff.frac) %>% dplyr::pull(feature)
+            tidyr::gather(key="feature", value="missing_pct") %>%
+            dplyr::arrange(missing_pct) %>%
+            dplyr::filter(missing_pct<missing.feature.cutoff.frac) %>%
+            dplyr::pull(feature)
 
         assertthat::assert_that(length(features) > 0)
         return(features)
     }
 
-    if(large.missing.features.prune==T) {
-        transactions_cleaned %<>%
-            dplyr::select(c(pruneFeatures(transactions_cleaned, missing.feature.cutoff.frac), "logerror"))
-        # features should not be excluded from properties #
+    if(length(features.excluded) > 0) {
+        # Don't remove the vtreat features. the treatment is not applied to the data set until the end
+        properties.tmp %<>% dplyr::select(-dplyr::one_of(setdiff(features.excluded, "id_parcel")))
     }
 
-    assertthat::assert_that(nrow(transactions_cleaned) == nrow(transactions))
+    if(large.missing.features.prune==T) {
+        features.pruned = properties.%<>%
+            dplyr::select(c(pruneFeatures(properties.tmp, missing.feature.cutoff.frac), "logerror"))
+        features.net.pruned = set.diff(features.pruned, features.excluded)
+        flog.info(paste("*** Pruned additional ", length(features.net.pruned), " features: "))
+        flog.info(paste(sort(features.net.pruned), collapse="\n"))
+    }
+
     ##################################################################################
     ######## JUST BEFORE REMOVING ROWS JOIN THE TREATMENT AND THE ORIGINAL DATA FRAME
     ##################################################################################
     if(do.vtreat == T) {
-        assertthat::assert_that(nrow(trainVtreat) == nrow(transactions_cleaned))
-        transactions_cleaned = cbind(trainVtreat %>% dplyr::select(-logerror), transactions_cleaned)
+        assertthat::assert_that(nrow(trainVtreat) == nrow(transactions.tmp))
+        transactions.tmp = cbind(trainVtreat %>% dplyr::select(-logerror), transactions.tmp)
     }
 
     #######################################################################
     #################### REMOVE OUTLIERS AND NAs ###########################
     #######################################################################
+    transactions.tmp %<>% dplyr::inner_join(properties.tmp, by="id_parcel")
+
     if(remove.outliers==T) {
-        transactions_dates %<>% dplyr::filter(transactions_cleaned$logerror <=outlier.range[2] & 
-                                                  transactions_cleaned$logerror >= outlier.range[1])
-        transactions_cleaned = transactions_cleaned  %>%
+        transactions.tmp %<>%
             dplyr::filter(logerror <=outlier.range[2] & logerror >=outlier.range[1])
-        assertthat::assert_that(nrow(transactions_dates) == nrow(transactions_cleaned))
     }
 
-    if(omit.nas == T) {
-        transactions_dates %<>% dplyr::filter(transactions_cleaned %>% complete.cases)
-        transactions_cleaned %<>% na.omit
-        # properties_cleaned %<>% na.omit # The properties are needed for prediction even if its NA
-        assertthat::assert_that(nrow(transactions_dates) == nrow(transactions_cleaned))
+    if(omit.nas == T) { # only for transactions
+         # The properties are needed for prediction even if its NA
+        transactions.tmp %<>% na.omit
     }
-    assertthat::assert_that(nrow(properties_cleaned) == nrow(properties))
-    assertthat::assert_that(nrow(transactions_dates) == nrow(transactions_cleaned))
-    print(paste("Using ", length(colnames(transactions_cleaned)) , " features in transactions:"))
-    print(colnames(transactions_cleaned))
-    print("..")
-    return(list(transactions_cleaned, transactions_dates, properties_cleaned, recode_list, testVtreatFn, tplan))
+    assertthat::assert_that(nrow(properties.tmp) <= nrow(properties))
+    flog.info(paste("Using ", length(colnames(transactions.tmp)) , " features in transactions:"))
+    flog.info(paste(sort(colnames(transactions.tmp)), collapse="\n"))
+    flog.debug("..")
+    return(list(transactions.tmp, properties.tmp, testVtreatFn, tplan))
 }
 
 
@@ -187,21 +208,21 @@ prepareData = function(
 # returns a property data set with the date column set to whats needed in the final predictions.
 
 propertiesDataSetPredictorsWithDateEncoding = function(
-                                       X, 
-                                       fitObj, # Used to predict the 
+                                       X,
+                                       fitObj, # Used to predict the
                                        recode_list.for.date, # If the dates are to be used in prediction this list contains the numerical value to date mappings used in X
                                        preProcessFn=function(x){x}, # Teh function to call after preparing X to pre process it before prediction but after adding the date column. Useful when working with vtreat
                                        mapping_dates = mapping_dates.default, # The dates in the prediction file column
                                        second_round_mapping_dates = second_round_mapping_dates.default, # Dates for the private LB released at the end of the first round
                                        dates.are.numeric=F,
-                                       dates.matter=T # Switch to control if predictions are done 
+                                       dates.matter=T # Switch to control if predictions are done
                                        ) {
     # This is a helper function that creates a date column in the properties data set for
     # prediction. The value of this date column are can be anything depending on the date_coded column of the recode_list.for.date. A function is retured to
     # that does the actual prediction. This method just sets up the mapping. The recode_list.for.date contains
     # mapping of date to whatever value needs to be substituted for it.
     # three data sets are created for the three prediction columns
-    mapping_dates.df = utils::stack(mapping_dates) # reshape all of the list's name-value pair to a 2 column data frame 
+    mapping_dates.df = utils::stack(mapping_dates) # reshape all of the list's name-value pair to a 2 column data frame
     colnames(mapping_dates.df) = c("prediction.col.2016", "date")
     second_round_mapping.df = utils::stack(second_round_mapping_dates)
     colnames(second_round_mapping.df) = c("prediction.col.2017", "date")
@@ -263,9 +284,9 @@ recodeHelper = function(X, colname) {
 }
 
 recodeCharacterColumns =function(
-        transactions, properties, features=c(
+        properties, features=c(
                    "zoning_landuse_county", "zoning_property",
-                   "flag_tub", "flag_fireplace", "tax_delinquency", "date")) {
+                   "flag_tub", "flag_fireplace", "tax_delinquency")) {
     # TODO: Consider not rolling up blank strings into their own value.
     # Tested this with some dummy examples:
     ### a.test = data.frame(b = c(23, NA, NA, " ", 14, 16, 23))
@@ -276,45 +297,32 @@ recodeCharacterColumns =function(
     # Assigns NA to the missing values or empty strings.
     recode_list = list()
     for(feature in features) {
-        if((feature == "date" ||
-                is.numeric(
-                    properties %>% dplyr::pull(feature) %>% na.omit)
-                ) &&
-                is.numeric(transactions %>% dplyr::pull(feature) %>% na.omit)) {
-            print(paste(feature, " is already numeric, skipping"));
-            next
-        }
-        print(paste("Recoding feature to numeric:", feature))
-        # Create a data frame with numeric values per factor
-        f1 = data.frame(rbind(
-                properties %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature),
-                transactions %>% dplyr::select(dplyr::matches(feature)) %>% dplyr::distinct_(.dots=feature))) %>%
-                recodeHelper(feature)
-        # Now join and get rid of the old column
-        # NA's will be left in place of empty strings
+       stopifnot(feature %in% colnames(properties))
+       if(is.numeric(properties %>% dplyr::pull(feature) %>% na.omit)) {
+           print(paste(feature, " is already numeric, skipping"));
+           next
+       }
+       print(paste("Recoding feature to numeric:", feature))
+       # Create a data frame with numeric values per factor
+       f1 = properties %>%
+               dplyr::select(dplyr::matches(feature)) %>%
+               dplyr::distinct_(.dots=feature) %>%
+               recodeHelper(feature)
+       # Now join and get rid of the old column
+       # NA's will be left in place of empty strings
        recode_list[[feature]] = f1
        right.coded.col.name = paste(feature, "_coded", sep="")
-       transactions.t = transactions %>% dplyr::left_join(f1, by=feature) %>%
+       properties.t  = properties %>% dplyr::left_join(f1, by=feature) %>%
             dplyr::select(-dplyr::one_of(feature)) %>%
             dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
-        if(feature != "date")
-            properties.t  = properties %>% dplyr::left_join(f1, by=feature) %>%
-                dplyr::select(-dplyr::one_of(feature)) %>%
-                dplyr::rename_(.dots=setNames(right.coded.col.name, feature))
 
-        assertthat::assert_that(all(dim(transactions) == dim(transactions.t)))
-        if(feature != "date")
-            assertthat::assert_that(all(dim(properties) == dim(properties.t)))
-        assertthat::assert_that(base::setequal(colnames(transactions),colnames(transactions.t)))
-        if(feature != "date")
-            assertthat::assert_that(base::setequal(colnames(properties), colnames(properties.t)))
-        if(feature != "date")
-            properties = properties.t
-        transactions = transactions.t
+       assertthat::assert_that(all(dim(properties) == dim(properties.t)))
+       assertthat::assert_that(base::setequal(colnames(properties), colnames(properties.t)))
+       properties = properties.t
+       rm(properties.t)
     }
-    return(list("transactions"=transactions, "properties"=properties, "recode_list" = recode_list))
+    return(list("properties"=properties, "recode_list" = recode_list))
 }
-
 
 convertToFactors = function(transactionPropertyData, features=c(
                                 "region_city", "region_neighbor", "region_zip", "region_county",
@@ -328,7 +336,7 @@ convertToFactors = function(transactionPropertyData, features=c(
 
 splitTrainingData = function(Y, split_percent=0.75) {
     set.seed(998)
-    inTraining <- createDataPartition(Y, p = split_percent, list = FALSE)
+    inTraining <- caret::createDataPartition(Y, p = split_percent, list = FALSE)
     return(inTraining)
 }
 
@@ -367,28 +375,32 @@ splitKWayStratifiedCrossFold = function(Y, split_percent) {
     return(pStrat[[1]]$train)
 }
 
-splitTrainingWrapper = function(XY, split_percent=0.85, splitFn=splitTrainingData,
+splitTrainingWrapper = function(XY,
+                                split_percent=0.85,
+                                splitFn=splitTrainingData,
                                 YName="logerror") {
-    trainingIndices = splitFn(Y = XY %>% dplyr::pull(YName), split_percent = split_percent)
 
-    XYTrain = XY[trainingIndices, ] %>% na.omit
-    XYTest = XY[-trainingIndices, ] %>% na.omit
+    trainingIndices <- caret::createDataPartition(XY %>% dplyr::pull(YName), p = split_percent, list = FALSE)
+
+    XYTrain = XY[trainingIndices, ]
+    XYTest = XY[-trainingIndices, ]
 
     XTrain = XYTrain %>% dplyr::select(-dplyr::contains(YName))
     XTest = XYTest %>% dplyr::select(-dplyr::contains(YName))
     YTrain = XYTrain %>% dplyr::pull(YName)
     YTest = XYTest %>% dplyr::pull(YName)
+    flog.debug(nrow(XTrain))
+    flog.debug(nrow(XTest))
+    flog.debug(length(YTest))
+    assertthat::assert_that(abs(nrow(XTrain)/nrow(XY) - split_percent) <= 1e-3)
     assertthat::assert_that(length(YTrain) == nrow(XTrain))
     assertthat::assert_that(length(YTest) == nrow(XTest))
     assertthat::assert_that(base::setequal(colnames(XTest), colnames(XTrain)) == T)
-    assertthat::assert_that(nrow(XTrain) > 0)
-    assertthat::assert_that(length(YTrain) > 0)
-    assertthat::assert_that(nrow(XTest) > 0)
-    assertthat::assert_that(length(YTest) > 0)
     return(list(XTrain, YTrain, XTest, YTest))
 }
-
-# May have some redundant stuff to the regression-vtreat branch code. 
+# TODO: Create a splitting routine that gets splits in different ways,
+# like city, zip and see if there is some improvements
+# May have some redundant stuff to the regression-vtreat branch code.
 # TODO: Refactor this to reuse some of that code.
 trainingVtreatWrapper = function(
            XY,

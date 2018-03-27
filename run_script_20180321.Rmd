@@ -1,0 +1,218 @@
+---
+title: Tuning the GBM learning rate
+author: "Sidharth Gupta"
+date: \today
+output:
+   html_document:
+    css: css/code.css
+    highlight: default
+    citation_package:
+    keep_tex: false
+    fig_caption: true
+    latex_engine: pdflatex
+runtime: shiny
+fontsize: 11pt
+geometry: margin=1ine
+header-includes:
+- \usepackage{indentfirst}
+- \usepackage{graphicx}
+- \usepackage{geometry}
+- \usepackage{subfigure}
+- \usepackage{amsmath}
+- \usepackage{listings}
+- \usepackage{tikz}
+- \usetikzlibrary{matrix}
+---
+
+```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE, results='hide'}
+library(dplyr)
+library(magrittr)
+library(gridExtra)
+library(ggplot2)
+library(h2o)
+library(gridExtra)
+library(futile.logger)
+source("h2o/source-for-rmd.R")
+h2o.init()
+```
+
+Tuning the learning rate. First lets prepare some data
+
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
+list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
+
+independent.vars = colnames(tr.baseline %>% select(-logerror))
+
+list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror")
+
+XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
+XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
+
+XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
+```
+
+Now lets create a grid that only varies the learning rate only. We choose a large number of trees. But becasue we have early stopping we should be ok.
+
+```{r hyperparams_search_crit}
+hyper_params_search_crit.learnrate.tune = function(
+            ntrees_opts = 10000, # early stopping will stop the earlier.
+            max_depth_opts = 10,  # Start with 6 for now
+            min_rows_opts = 5,   # How many leaf nodes to average over, doing the log of # rows would be ok
+            learn_rate_opts = 0.01,
+            learn_rate_annealing = 1,
+            sample_rate_opts = 0.9,
+            col_sample_rate_opts = 0.9,
+            col_sample_rate_per_tree_opts = 0.9,
+            strategy="RandomDiscrete") {
+
+    list[search_criteria, hyper_params] =  hyper_params_search_crit(
+            ntrees_opts = ntrees_opts,
+            max_depth_opts = max_depth_opts,
+            min_rows_opts = min_rows_opts,
+            learn_rate_opts = learn_rate_opts, # from the previous
+            learn_rate_annealing = learn_rate_annealing,
+            sample_rate_opts = sample_rate_opts,
+            col_sample_rate_opts = col_sample_rate_opts,
+            col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts,
+            strategy=strategy)
+    return(list(search_criteria, hyper_params))
+}
+
+```
+
+
+Here is the wrapper written to do the model fit.
+```{r}
+
+baseline.fit = function(hp, sc, grid_id = "learning_rate_search", seed=123456) {
+        h2o.grid.helper(
+                        XYTrain.h2o,
+                        XYTest.h2o,
+                        independentCols=independent.vars,
+                        hyper_params = hp,
+                        search_criteria = sc,
+                        algorithm="gbm",
+                        grid_id=grid_id,
+                        seed = seed
+                        )
+}
+```
+
+Now lets train a few models. We train a few models a few times to compare learning rates
+
+```{r training, cache=TRUE}
+set.seed(123456)
+NGrids = 15
+target_learning_rates = seq(0.01, 0.05, 0.01)
+list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate] =
+    hyper_params_search_crit.learnrate.tune(learn_rate_opts=target_learning_rates)
+fits = sapply(X = 1:NGrids,
+              FUN=function(x) baseline.fit(
+                       hp=hyper_params.gbm.learnrate,
+                       sc=search_criteria.gbm.learnrate,
+                       grid_id = paste("learning_rate_search_", x, sep=''),
+                       seed = as.integer(runif(1, 1e5, 1e6))))
+```
+
+Extract the models from each grid in an list of lists. Note here that each grid has `length(target_learning_rates)` GBM models.
+```{r modellist, results='hide', cache=TRUE}
+# A list of lists of all the trained models
+models.lst = sapply(X=1:NGrids,
+                    FUN=function(x) {
+                        grid.ids = h2o.getGrid(paste("learning_rate_search_", x, sep=''))
+                        sapply(X=grid.ids@model_ids, FUN=h2o.getModel)
+                    })
+print(dim(models.lst))
+```
+
+First extract the score histories of each of the models into a data frame
+and stuff them into a list.
+```{r}
+
+getRMSEScoreHistory = function (models) {
+    # Given a list of model ids get a data frame with its RMSE score history
+    df.grid = data.frame()
+    score.history = data.frame()
+    # Learning rate of 0.03 seems to be ok.
+    for (i in 1:length(models)) {
+        model.rmse = h2o.rmse(h2o.performance(models[[i]]))
+        lr = models[[i]]@parameters$learn_rate
+        df.grid = rbind(df.grid, c(lr, model.rmse))
+        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>%
+            data.frame %>%
+            pull(validation_rmse)
+        score.history = rbind(score.history,
+                              data.frame(
+                                         ntrees = 1:length(model.rmse.rate),
+                                         rmse = model.rmse.rate,
+                                         id = i,
+                                         lr = lr,
+                                         id = paste("model_", i, "_lr_", lr, sep='')
+                                         )
+                              )
+    }
+    score.history
+}
+
+# Sanity check: each column is one grid. There are NGrids grids
+# and each grid has length(target_learning_rates) models
+assertthat::assert_that(nrow(models.lst) == length(target_learning_rates))
+assertthat::assert_that(ncol(models.lst) == NGrids)
+
+# For each model list in models.lst extract the histories
+score.history.lst = sapply(X = 1:NGrids,
+                           function(x) getRMSEScoreHistory(models.lst[, x]))
+```
+
+So how do the learning curves look for each grid? Lets plot them.
+```{r scoreHistory, results='markup'}
+# The axes limits
+min_y_lim = min(sapply(1:NGrids,
+                       function(g) {
+                           score.history.lst[, g] %>%
+                               data.frame %>%
+                               pull(rmse) %>% min
+                       }))
+max_y_lim = max(sapply(1:NGrids,
+                       function(g) {
+                           score.history.lst[, g] %>%
+                               data.frame %>%
+                               pull(rmse) %>% max
+                       }))
+
+plot.score.history = function(score.history) {
+    ggplot(score.history %>% data.frame) +
+        geom_line(aes(y=rmse, x=ntrees, color=as.factor(lr)),
+                  position=position_dodge(1))         +
+        ylim(c(min_y_lim, max_y_lim))
+}
+score.history.combined =
+    Reduce(function(x, init) {
+               rbind(x, init)
+          }, Map(function(i) {
+                score.history.lst[, i] %>%
+                    data.frame %>%
+                    mutate(grid_id=i)
+            }, 1:NGrids)
+    )
+```
+
+Plot em!
+```{r plots, fig.width=10, fig.height=10}
+
+# I initially tried working with a lits of plots instead of plotting the data directly. Had trouble sizing the plots properly. So backed off and instead used a combined version of score history with vanialla ggplot.
+ggplot(score.history.combined) +
+    facet_wrap(~ grid_id, ncol=2) +
+        geom_line(aes(y=rmse, x=ntrees, color=as.factor(lr)),
+                  position=position_dodge(1)) +
+        ylim(c(min_y_lim, max_y_lim)) +
+        theme(
+          legend.position="bottom",
+          strip.background = element_blank(),
+          strip.text.x = element_blank()
+        )
+
+```
+
+It seems clear that 7/10 of the curves have a lower RMSE with learning rate = 0.01.

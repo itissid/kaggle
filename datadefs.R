@@ -137,30 +137,30 @@ features.excluded.xg.default = c(
     "fips", # redundant
     "census", # redundant
     "area_total_calc", # 100% redundant to area_live_finished
-    "tax_year",
-    "aircon",
-    "heating",
-    #"zoning_landuse",
-    "zoning_property",
-    #"zoning_landuse_county",
-    "area_liveperi_finished",
-    "area_patio",
-    "area_pool",
-    "area_shed",
-    "area_garage",
-    "area_total_finished",
-    "area_unknown", 
-    "area_base",
-    "area_firstfloor_finished",
-    "deck",
+    "tax_year" # This has only one value for the training set.
+    #"aircon",
+    #"heating",
+    ##"zoning_landuse",
+    ##"zoning_property",
+    ##"zoning_landuse_county",
+    ##"area_liveperi_finished",
+    #"area_patio",
+    #"area_pool",
+    #"area_shed",
+    #"area_garage",
+    #"area_total_finished",
+    #"area_unknown", 
+    #"area_base",
+    #"area_firstfloor_finished",
+    #"deck",
 
-    "date",
-    #"tract_number",
-    "quality",
-    "framing",
-    "architectural_style",
-    "region_neighbor",
-    #"tract_block"
+    #"date",
+    ##"tract_number",
+    ##"tract_block",
+    #"quality",
+    #"framing",
+    #"architectural_style",
+    #"region_neighbor"
 )
 
 features.logtransformed.xg.default = c(
@@ -171,15 +171,37 @@ features.logtransformed.xg.default = c(
     "area_live_finished",
     "area_lot"
 )
-# Quite a few features here are dropped because of the large # of categories
-# Ideally we should do multilevel regression for some of them
+
 features.categorical.xg.default = c(
+    # NOTE: see the note on why some largely missing categorical variables are included:
     "region_city",
     "region_county",
     "region_zip",
-    "num_unit",
     "build_year",
+    "zoning_landuse_county",
+    "zoning_landuse",
+    "tax_year",
+    "tract_block",
+    "tract_number",
+
+    # The following properties are largely missing, but I added them because xgboost treats missing data as information
+    # Consider removing one or more of these if they aren't in the feature importance matrix
+    "zoning_property",
+    "zoning_landuse_county",
+    "aircon",
+    "heating",
+    "deck",
+    "quality",
+    "framing",
+    "architectural_style",
+    "flag_tub",
+    "flag_tub_extra",
+    "flag_fireplace",
+    "material", 
+    "region_neighbor",
+    "tax_delinquency",
     "tax_delinquency_year"
+
 )
 
 features.treated.vtreat.xg.default = c(

@@ -1,6 +1,7 @@
 # Train & Cross-validate a (shallow) XGB-GBM
-source("h2o-utils.R")
-source("xgb-config.R")
+# See http://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/xgboost.html for details
+source("utils/h2o.R")
+source("h2o/xgb-config.R")
 
 #############################
 ###### LightGBM model  ######
@@ -60,6 +61,7 @@ lightgbm.grid = function(
                         XY, split_percent=0.90, YName=YName) 
     XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
     XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
+    # From utils/h2o.R
     h2o.grid.helper(XYTrain.h2o, 
                     XYTest.h2o, 
                     independentCols, 
