@@ -54,6 +54,7 @@ XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="X
 ```
 
 Lets create a grid that only varies the learning rate only. We choose a large number of trees. But becasue we have early stopping we should be ok. The early stopping criteria is defined at the individual tree level
+
 ```{r hyperparams_search_crit}
 hyper_params_search_crit.depth.tune = function(
             ntrees_opts = 10000, # early stopping will stop the earlier.
@@ -75,7 +76,7 @@ hyper_params_search_crit.depth.tune = function(
             sample_rate_opts = sample_rate_opts,
             col_sample_rate_opts = col_sample_rate_opts,
             col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts,
-            strategy=strategy)
+            strategy=strategy) 
     return(list(search_criteria, hyper_params))
 }
 
@@ -102,7 +103,7 @@ baseline.fit = function(hp, sc, grid_id = "depth_search", seed=123456) {
 Now train the models. We reuse the code from last notebook. But keep the number of grids we train to 1.
 
 ```{r training, cache=TRUE, results='hide'}
-set.seed(123456)
+set.seed(123456) 
 NGrids = 1 # Just train the model once
 max_depth_opts = seq(1:15)
 learn_rate_opts = c(0.01, 0.02)
@@ -142,14 +143,14 @@ getRMSEScoreHistory = function (models) {
         # For some reason there was no max_depth parameter in the parameters list of the model
         # This is probably a bug
         max_depth = models[[i]]@model$model_summary$max_depth
-        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>%
-            data.frame %>%
+        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>% 
+            data.frame %>% 
             pull(validation_rmse)
         score.history = rbind(score.history,
                               data.frame(
-                                         ntrees = 1:length(model.rmse.rate),
+                                         ntrees = 1:length(model.rmse.rate), 
                                          depth=rep(max_depth, length(model.rmse.rate)),
-                                         rmse = model.rmse.rate,
+                                         rmse = model.rmse.rate, 
                                          id = i,
                                          lr = lr
                                          )
@@ -197,7 +198,7 @@ score.history.combined %<>% group_by(depth, lr) %>%  mutate(min_rmse_by_depth = 
 
 ggplot(score.history.combined) +
     facet_wrap(~ depth, ncol=2) +
-        geom_line(aes(y=rmse, x=ntrees,
+        geom_line(aes(y=rmse, x=ntrees, 
                       color=as.factor(lr)),
                   position=position_dodge(1)) +
         geom_hline(aes(yintercept = min_rmse_by_depth, color=as.factor(lr)), size=0.6, alpha=0.5) +
@@ -281,4 +282,3 @@ predictions <- foreach::foreach(
 
 stopParallelCluster(clus)
 ```
-
