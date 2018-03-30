@@ -1,7 +1,8 @@
 library(caret)
-
+# Contains routines for Regression using Caret.
 
 getDefaultTrControl = function(allowParallel=T, summaryFunction=rmseSummary) {
+    # Configuration for how the training is carried out
     trainControl(
           method = "repeatedcv",
           number = 5,
@@ -25,7 +26,7 @@ getIndexTrControl = function(
         summaryFunction=summaryFunction)
 }
 
-# Simplest model.
+# Training the simple regression model.
 bestFit.regression = function(
            train, target, ncores=6,
            tuneGrid,

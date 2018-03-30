@@ -38,6 +38,7 @@ h2o.grid.helper = function(
         stopping_metric = "RMSE",
         stopping_tolerance = 1e-5, # as the learning curve flattens the error oscillates around a fixed value with a value > stopping tolerance. So make sure this isn't too small. Look at teh h2o learning graph to figure this out
         stopping_rounds = 5,
+        max_runtime_secs = 5000,
         ...
     )
 }
@@ -54,3 +55,41 @@ modelListFromGrids = function(grid_id_prefix, N) {
            })
 }
 
+# This is a routine you can call that parallelizes the three predictions on dates 2016/10-2016/12 for zillow data set using h2o
+h2o.createPredictionsFromModel = function(
+	    gbm.model_id, X, host=H2O.HOST, port=H2O.PORT) {
+        # It assumes that the h2o cluster is available on the remote machine
+        # Do prediction for three dates
+        # TODO: Consider parallel prediction for each of the 3 columns
+        predictions = foreach(
+                          i = 1:length(predict.dates),
+                          .combine=cbind,
+                          .packages=c("h2o", "magrittr")) %do% {
+            # Create a small h2o instance to do predictions on each data set
+            return(tryCatch({
+                h2o.connect(ip=host, port=port)
+                gbm.model = h2o.getModel(gbm.model_id)
+                print("..")
+                prediction = as.data.frame(
+                               h2o.predict(gbm.model,
+                                           X %>% 
+                                               dplyr::mutate(date=predict.dates.numeric.codes[i]) %>%
+                                               as.h2o
+                                           )
+                               )
+                print("....")
+                return(prediction)
+            }, error= function(e) {
+                print('Error!')
+                print(e)
+            }))
+        }
+
+	predictions = cbind(predictions, predictions)
+	colnames(predictions) = c("201610", "201611", "201612", "201710", "201711", "201712")
+	predictions$parcelid = X$id_parcel
+	print("....P")
+        # Cleanup
+        #h2o.rm(c("XPredict.1", "XPredict.2", "XPredict.3"))
+	return(predictions)
+}

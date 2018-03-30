@@ -3,13 +3,13 @@ source("utils.R")
 source("datadefs.R")
 # Strategy 1 to tune the boosting models
 # 1. Start with a short number of trees like 100  and tune the learning rate: [2-10]/trees.
-#     Observe the curve of the training metric to figure out the learning rate 
-# 2. Once you have a good hold of learning rate we can try tuning the tree depth. 
+#     Observe the curve of the training metric to figure out the learning rate
+# 2. Once you have a good hold of learning rate we can try tuning the tree depth.
 # 3. And then the rest of the parameters
 
 # March 23rd 2018: Another strategy to tune these trees is as follows:
 # https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/tutorials/gbm/gbmTuning.Rmd
-# First decide on the number of trees by selecting a low learning rate(0.02). Use a stopping 
+# First decide on the number of trees by selecting a low learning rate(0.02). Use a stopping
 # Once the number of trees are determined(depending on what the algorithm selected) one can tune the other params
 #####################################
 ##### NOTE: Early stopping for individual trees and the total algorithm are different: https://groups.google.com/forum/#!topic/h2ostream/xgVU3scBb7w
@@ -18,12 +18,17 @@ hyper_params_search_crit = function(
             # Defaults are meant for tuning the learning rate
             ntrees_opts = 1000,
             max_depth_opts = 6,
-            min_rows_opts = 5, 
+            min_rows_opts = 5,
             learn_rate_opts = 0.01,
             learn_rate_annealing = 0.995,
             sample_rate_opts = 0.8,
             col_sample_rate_opts = 0.8,
             col_sample_rate_per_tree_opts = 0.8,
+	    col_sample_rate_change_per_level_opts = 0.9,
+	    min_split_improvement_opts=1e-05,
+	    nbins_opts = 20, 
+	    nbins_cats_opts = 1024,
+	    histogram_type_opts = c("AUTO", "UniformAdaptive", "Random", "QuantilesGlobal", "RoundRobin"),
             strategy="Cartesian") {
             # Creates Hyper parameters for GBM
             # no categorical features in this dataset
@@ -37,13 +42,17 @@ hyper_params_search_crit = function(
                          learn_rate_annealing=learn_rate_annealing,
                          sample_rate = sample_rate_opts,
                          col_sample_rate = col_sample_rate_opts,
-                         col_sample_rate_per_tree = col_sample_rate_per_tree_opts
+                         col_sample_rate_per_tree = col_sample_rate_per_tree_opts,
+			 col_sample_rate_change_per_level = col_sample_rate_change_per_level_opts,
+			nbins = nbins_opts,			
+			nbins_cats = nbins_cats_opts,
+			min_split_improvement = min_split_improvement_opts,
+			histogram_type = histogram_type_opts
+			 
     )
 
     search_criteria = list(
-                       strategy = strategy,
-                       max_runtime_secs = 5000,
-                       max_models = 200
+                       strategy = strategy
                       )
     return(list(search_criteria, hyper_params))
 }
@@ -70,14 +79,14 @@ hyper_params_search_crit.depth = function(
             learn_rate_opts = learn_rate_opts, # from the previous
             sample_rate_opts = sample_rate_opts,
             col_sample_rate_opts = col_sample_rate_opts,
-            col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts) 
+            col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts)
     return(list(search_criteria, hyper_params))
 }
 
 
 hyper_params_search_crit.final = function(
             # Creates Hyper parameters for Just varying the depth, because that seemed to be the only important one after you adjust for the
-            ntrees_opts = 3000,      
+            ntrees_opts = 3000,
             max_depth_opts = 12,
             min_rows_opts = 1,
             learn_rate_opts = 0.01,
@@ -95,19 +104,17 @@ hyper_params_search_crit.final = function(
             learn_rate_opts = learn_rate_opts, # from the previous
             sample_rate_opts = sample_rate_opts,
             col_sample_rate_opts = col_sample_rate_opts,
-            col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts) 
+            col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts)
     return(list(search_criteria, hyper_params))
 }
 
 
 list[search_criteria.gbm.default, hyper_params.gbm.default] =  hyper_params_search_crit()
-list[search_criteria.gbm.depth, hyper_params.gbm.depth] =  hyper_params_search_crit.depth()
-list[search_criteria.gbm.final, hyper_params.gbm.final] =  hyper_params_search_crit.final()
 
 prepareDataWrapper.h2o.gbm.baseline = function(
                        tr="inputs/train_2016_v2.csv",
                        pr="inputs/properties_2016.csv",
-                       log.transform=T, # Log transformation of 
+                       log.transform=T, # Log transformation of
                        remove.outliers=F,
                        outlier.range=c(-0.4, 0.4),
                        omit.nas=F,
@@ -117,7 +124,7 @@ prepareDataWrapper.h2o.gbm.baseline = function(
                        categorical.to.numeric=F, # h2o does this by default: https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/data-science/xgboost.rst
                        convert.to.categorical=T, # but convert some of these features to categorical so that h2o handles it properly
                        taxbyarea.normalize=F,
-                       large.missing.features.prune=F, # h2o's docs says it treats missing data as information. So we won't delete rows 
+                       large.missing.features.prune=F, # h2o's docs says it treats missing data as information. So we won't delete rows
                        missing.feature.cutoff.frac = 1,
                        features.excluded=features.excluded.xg.default,
                        # Convert to factors carefully
@@ -135,7 +142,7 @@ prepareDataWrapper.h2o.gbm.baseline = function(
          remove.outliers=remove.outliers,
          outlier.range=outlier.range,
          omit.nas=omit.nas,
-         do.vtreat=do.vtreat, 
+         do.vtreat=do.vtreat,
          categorical.to.numeric=categorical.to.numeric,
          convert.to.categorical=convert.to.categorical,
          taxbyarea.normalize=taxbyarea.normalize,
@@ -146,40 +153,15 @@ prepareDataWrapper.h2o.gbm.baseline = function(
          features.categorical=features.categorical
          )
 
-    # The dates are to be treated as numeric features for  
+    # The dates are to be treated as numeric features for
+    t.dates = as.factor(transactions$date)
     if(dates.to.numeric)
         transactions %<>% mutate(date = as.numeric(as.factor(date)))
     if(keep.dates == F)
         transactions %<>% select(-date)
-    return(list(transactions, properties, testVtreatFn, tplan))
+    return(list(transactions, properties, testVtreatFn, tplan, t.dates))
 }
 
-# TODO: Use h2o-utils to dedup this code
-gbm.grid = function(
-                    XY, YName="logerror", 
-                    independentCols = setdiff(colnames(XY), YName), 
-                    hyper_params=hyper_params.default, 
-                    search_criteria=search_criteria.default, 
-                    grid_id="depth_grid",
-                    keep_cvpreds=T) {
-
-    print(paste(hyper_params, sep=":", collapse=", "))
-
-    list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(
-                        XY, split_percent=0.90, YName="logerror") 
-    XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
-    XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
-    h2o.grid.helper(
-        XYTrain.h2o, 
-        XYTest.h2o, 
-        independentCols, 
-        YName=YName, 
-        hyper_params=hyper_params.default, 
-        search_criteria=search_criteria.default,
-        grid_id=grid_id , 
-        algorithm="gbm",
-        keep_cvpreds=keep_cvpreds)
-}
 
 # Use the gbm model to do some predictions from the grid like so:
 # grid =  gbm.grid(..., grid_id="test_grid", ...)

@@ -214,7 +214,8 @@ prepareDataWrapper.xg = function(
                        features.categorical=features.categorical.xg.default,
                        features.logtransformed=features.logtransformed.xg.default,
                        features.vtreat.treated=features.treated.vtreat.xg.default,
-                       vtreat.opts=list(scale.features=T, usecached.plan=F, pruneSig=NULL)) {
+                       vtreat.opts=list(scale.features=T, usecached.plan=F, prun,eSig=NULL)) {
+    # From utils
     list[transactions, tdates, properties, recode_list, testVtreatFn, tplan] = prepareData(
          recode_chars=recode_chars,
          log.transform=log.transform,

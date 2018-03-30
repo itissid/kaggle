@@ -7,7 +7,8 @@ library(foreach)
 # do spotBidding for large instances I can chose to 
 # start cluster here, ami is based on a "worker node" machine image that I created
 # We can only have 20 instances running at once without prior permission from amazon.
-
+# Don't forget to source your default credentials:
+# aws.signature::use <- credentials()
 #cl <- startCluster(ami="ami-xxxx",key="Keyname",instance.count=19,instance.type="t2.micro",security.groups="sg-xxxx",verbose=TRUE)
 #
 #
@@ -17,11 +18,12 @@ library(foreach)
 # registerDoSNOW(clust)
 #
 #
-###### Do parallel work here
+###### Do parallel work #########
+#.....
 #  stopCluster(clust)
 ## stops the SNOW cluster
 #  terminateCluster(cl)
-## terminates the EC2 worker instances, so billing stops.  
+# terminates the EC2 worker instances, so billing stops.  
 
 # need to re-run these functions from AWS.tools so that they are added to the namespace 
 sleep.while.pending <- function(instances, sleep.time=2,verbose=TRUE) {
@@ -66,7 +68,7 @@ startCluster <- function (ami,
                           instance.count,
                           instance.type,
                           keypair="sid-aws-key", # This is needed just for access
-                          security.group <- "sg-ec2b7c9f",
+                          security.group = "sg-ec2b7c9f",
                           verbose = TRUE) 
 {
     # Assume the keys are in the default ~/.aws/credentials file for this instance.

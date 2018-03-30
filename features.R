@@ -11,6 +11,33 @@ getNeighborhoodFeatures = function() {
     # TODO: encapsulate features a bit more
 }
 
+# Extra features from Nikunj's Kernel
+#error in calculation of the finished living area of home
+#df_train['N-LivingAreaError'] = df_train['area_total_calc']/df_train['area_live_finished']
+#
+##proportion of living area
+#df_train['N-LivingAreaProp'] = df_train['area_total_calc']/df_train['area_lot']
+#df_train['N-LivingAreaProp2'] = df_train['area_live_finished']/df_train['area_total_finished']
+#
+##Amout of extra space
+#df_train['N-ExtraSpace'] = df_train['area_lot'] - df_train['area_total_calc'] 
+#df_train['N-ExtraSpace-2'] = df_train['area_total_finished'] - df_train['area_live_finished'] 
+#
+##Total number of rooms
+#df_train['N-TotalRooms'] = df_train['num_bathroom'] + df_train['num_bedroom']
+#
+##Average room size
+#df_train['N-AvRoomSize'] = df_train['area_total_calc']/df_train['num_room'] 
+#
+## Number of Extra rooms
+#df_train['N-ExtraRooms'] = df_train['num_room'] - df_train['N-TotalRooms'] 
+#
+##Ratio of the built structure value to land area
+#df_train['N-ValueProp'] = df_train['tax_building']/df_train['tax_land']
+#
+##Does property have a garage, pool or hot tub and AC?
+#df_train['N-GarPoolAC'] = ((df_train['num_garage']>0) & (df_train['flag_tub_extra']>0) & (df_train['aircon']!=5))*1 
+
 makePropertiesFeaturesReadable = function(properties) {
     properties %>% dplyr::rename(
       id_parcel = parcelid,

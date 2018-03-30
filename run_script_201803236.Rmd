@@ -33,27 +33,27 @@ library(h2o)
 library(gridExtra)
 library(futile.logger)
 source("h2o/source-for-rmd.R")
-h2o.init()
+H2O.PORT=54321
+H2O.HOST="localhost" # TODO: Remote?
+h2o.init(ip=H2O.HOST, port=H2O.PORT)
 ```
 
 ##### Task: Now that the learning rate is sort of decided we want to tune the tree depth.
 
 ```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
-# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function. 
-list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline(dates.to.numeric=T, keep.dates=T)
+# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
+list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL, t.dates] =  prepareDataWrapper.h2o.gbm.baseline(dates.to.numeric=T, keep.dates=T)
 
 independent.vars = colnames(tr.baseline %>% select(-logerror))
 
-list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror") 
+list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror")
 
 XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
 XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
 
-XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
 ```
 
-Lets create a grid that only varies the learning rate only. We choose a large number of trees. But becasue we have early stopping we should be ok.
-
+Lets create a grid that only varies the learning rate only. We choose a large number of trees. But becasue we have early stopping we should be ok. The early stopping criteria is defined at the individual tree level
 ```{r hyperparams_search_crit}
 hyper_params_search_crit.depth.tune = function(
             ntrees_opts = 10000, # early stopping will stop the earlier.
@@ -63,7 +63,7 @@ hyper_params_search_crit.depth.tune = function(
             learn_rate_annealing = 0.995, # Chosen from last notebook
             sample_rate_opts = 0.9,
             col_sample_rate_opts = 0.9,
-            col_sample_rate_per_tree_opts = 0.9, 
+            col_sample_rate_per_tree_opts = 0.9,
             strategy="RandomDiscrete") {
 
     list[search_criteria, hyper_params] =  hyper_params_search_crit(
@@ -75,7 +75,7 @@ hyper_params_search_crit.depth.tune = function(
             sample_rate_opts = sample_rate_opts,
             col_sample_rate_opts = col_sample_rate_opts,
             col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts,
-            strategy=strategy) 
+            strategy=strategy)
     return(list(search_criteria, hyper_params))
 }
 
@@ -87,12 +87,12 @@ Here is the wrapper written to do the model fit.
 
 baseline.fit = function(hp, sc, grid_id = "depth_search", seed=123456) {
         h2o.grid.helper(
-                        XYTrain.h2o, 
-                        XYTest.h2o, 
+                        XYTrain.h2o,
+                        XYTest.h2o,
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
-                        algorithm="gbm", 
+                        algorithm="gbm",
                         grid_id=grid_id,
                         seed = seed
                         )
@@ -102,19 +102,28 @@ baseline.fit = function(hp, sc, grid_id = "depth_search", seed=123456) {
 Now train the models. We reuse the code from last notebook. But keep the number of grids we train to 1.
 
 ```{r training, cache=TRUE, results='hide'}
-set.seed(123456) 
+set.seed(123456)
 NGrids = 1 # Just train the model once
 max_depth_opts = seq(1:15)
 learn_rate_opts = c(0.01, 0.02)
 list[search_criteria.gbm.depth, hyper_params.gbm.depth] = hyper_params_search_crit.depth.tune(
-                  max_depth_opts=max_depth_opts, 
-                  learn_rate_opts=learn_rate_opts)
-fits = sapply(X = 1:NGrids, 
+              max_depth_opts=max_depth_opts,
+              learn_rate_opts=learn_rate_opts)
+fits = sapply(X = 1:NGrids,
               FUN=function(x) baseline.fit(
-                       hp=hyper_params.gbm.depth, 
-                       sc=search_criteria.gbm.depth, 
-                       grid_id = paste("depth_search_", x, sep=''), 
+                       hp=hyper_params.gbm.depth,
+                       sc=search_criteria.gbm.depth,
+                       grid_id = paste("depth_search_", x, sep=''),
                        seed = as.integer(runif(1, 1e5, 1e6))))
+
+# Save these models for using later. 
+sapply(1:nrow(fits), FUN=function(x) {
+           saved.path = "saved_models/gbm/baseline/depthtune/"
+           if(!dir.exists(saved.path)) {
+               dir.create(saved.path, recursive=T)
+           }
+           h2o.saveModel(fits[i, 1], path=saved.path, force=TRUE) # Just save the model overwriting existing ones
+})
 ```
 
 So how do the learning curves look for each fit? First extract the score histories of each of the models
@@ -133,14 +142,14 @@ getRMSEScoreHistory = function (models) {
         # For some reason there was no max_depth parameter in the parameters list of the model
         # This is probably a bug
         max_depth = models[[i]]@model$model_summary$max_depth
-        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>% 
-            data.frame %>% 
+        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>%
+            data.frame %>%
             pull(validation_rmse)
         score.history = rbind(score.history,
                               data.frame(
-                                         ntrees = 1:length(model.rmse.rate), 
+                                         ntrees = 1:length(model.rmse.rate),
                                          depth=rep(max_depth, length(model.rmse.rate)),
-                                         rmse = model.rmse.rate, 
+                                         rmse = model.rmse.rate,
                                          id = i,
                                          lr = lr
                                          )
@@ -156,8 +165,8 @@ assertthat::assert_that(ncol(models.lst) == NGrids)
 
 # For each model list in models.lst extract the score histories
 g11 = h2o.getGrid("depth_search_1", sort_by="RMSE") #cache the one grid for offline access
-score.history.lst = sapply(X = 1:NGrids, 
-                           function(x) getRMSEScoreHistory(models.lst[, x])) 
+score.history.lst = sapply(X = 1:NGrids,
+                           function(x) getRMSEScoreHistory(models.lst[, x]))
 
 ```
 
@@ -188,7 +197,7 @@ score.history.combined %<>% group_by(depth, lr) %>%  mutate(min_rmse_by_depth = 
 
 ggplot(score.history.combined) +
     facet_wrap(~ depth, ncol=2) +
-        geom_line(aes(y=rmse, x=ntrees, 
+        geom_line(aes(y=rmse, x=ntrees,
                       color=as.factor(lr)),
                   position=position_dodge(1)) +
         geom_hline(aes(yintercept = min_rmse_by_depth, color=as.factor(lr)), size=0.6, alpha=0.5) +
@@ -208,12 +217,68 @@ as you can see by the horizontal lines. 6 out of the top 10 learning rates are 0
 g11@summary_table %>% select(learn_rate, max_depth, rmse) %>% data.frame
 ```
 
-These values of depth(10-14) and learning_rate(0.01,0.02) will be the parameters that shall be used in the grid search.
+These values of depth(8-14) and learning_rate(0.01,0.02) will be the parameters that shall be used in the grid search. One thing I noticed was that upon running this script with different splits results in slightly different optimal treedepths.
 
-In the next we do some predictions using the best model from just these values.
+Next we do some predictions using the best models.
 
 ```{r}
-#model
-#gbm.bestfit = h2o.getModel(model_id)
+model_ids.top4 = g11@summary_table %>% head(4) %>% pull(model_ids)
+
+predict.dates = c("2016-10-01", "2016-11-01", "2016-12-01")
+
+predict.dates.numeric.codes = which(levels(t.dates) %in% predict.dates)
+
+
+createPredictionsFromModel = function(gbm.model_id, X, host=H2O.HOST, port=H2O.PORT) {
+        # It assumes that the h2o cluster is available on the remote machine
+        # Do prediction for three dates
+        # TODO: Consider parallel prediction for each of the 3 columns
+        predictions = foreach(
+                          i = 1:length(predict.dates),
+                          .combine=cbind,
+                          .packages=c("h2o", "magrittr")) %do% {
+            # Create a small h2o instance to do predictions on each data set
+            return(tryCatch({
+                h2o.connect(ip=host, port=port)
+                gbm.model = h2o.getModel(gbm.model_id)
+                print("..")
+                prediction = as.data.frame(
+                               h2o.predict(gbm.model,
+                                           X %>% 
+                                               dplyr::mutate(date=predict.dates.numeric.codes[i]) %>%
+                                               as.h2o
+                                           )
+                               )
+                print("....")
+                return(prediction)
+            }, error= function(e) {
+                print('Error!')
+                print(e)
+            }))
+        }
+
+	predictions = cbind(predictions, predictions)
+	colnames(predictions) = c("201610", "201611", "201612", "201710", "201711", "201712")
+	predictions$parcelid = X$id_parcel
+	print("....P")
+        # Cleanup
+        #h2o.rm(c("XPredict.1", "XPredict.2", "XPredict.3"))
+	return(predictions)
+}
+
+clus = registerDoParallelWrapper(log.file.prefix="gbm.cluster", max.cores=6)
+# A parallel loop here to split the data and combine it
+predictions <- foreach::foreach(
+          X=itertools::isplitRows(pr.baseline %>% head(100), chunks=4),
+          .combine=cbind,
+          #.export=c("predict.dates.numeric.codes"),
+          .packages=c("foreach")) %:% 
+    foreach(model_id= iter(model_ids.top4), 
+             .packages=c("foreach")) %dopar% {
+        createPredictionsFromModel(model_id, X)
+    
+}
+
+stopParallelCluster(clus)
 ```
 

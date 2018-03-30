@@ -1,5 +1,5 @@
 library(rlang)
-.transformCoords = function(X) {
+transformCoords = function(X) {
     # Internal function
     X %>%
 	dplyr::mutate(latitude = latitude/1e6, longitude=longitude/1e6)
@@ -7,7 +7,7 @@ library(rlang)
 
 oc_high_75 = c( 'LAGUNA BEACH' , 'NEWPORT BEACH', 'LAGUNA WOODS','SAN CLEMENTE', 'DANA POINT', "SAN JUAN CAPISTRANO","SANTA ANA",  "SEAL BEACH")
 
-.transformErrors = function(transactionPropertyData) {
+transformErrors = function(transactionPropertyData) {
     transactionPropertyData %>%
 	dplyr::mutate(abs_logerror = abs(logerror)) %>%
 	dplyr::mutate(overunder = ifelse(logerror<0,"under","over"))
@@ -15,8 +15,8 @@ oc_high_75 = c( 'LAGUNA BEACH' , 'NEWPORT BEACH', 'LAGUNA WOODS','SAN CLEMENTE',
 
 transformCoordErrors = function (transactionPropertyData) {
     sample_props = transactionPropertyData %>%
-        .transformCoords() %>%
-        .transformErrors()
+        transformCoords() %>%
+        transformErrors()
     return(sample_props)
 }
 
