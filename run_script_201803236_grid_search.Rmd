@@ -31,14 +31,17 @@ library(gridExtra)
 library(ggplot2)
 library(h2o)
 library(gridExtra)
+source("utils/AmazonEC2.R")
 source("h2o/source-for-rmd.R")
 SEED=123456
+SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
+CORES.PER.MACHINE=4 # For the multi machine AWS cluster
 ```
 
 ##### The task: To determine the other parameters of the grid
 
 ```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
-# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function. 
+# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 
 list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"))
@@ -50,34 +53,34 @@ independent.vars = colnames(tr.baseline %>% select(-logerror))
 First lets initialize the hyper parameters as follows
 ```{r hyperparams_search_crit}
 
-list[search_criteria.gbm, hyper_params.gbm] = 
+list[search_criteria.gbm, hyper_params.gbm] =
     hyper_params_search_crit(
-          max_depth_opts=seq(8, 14, 1), 
+          max_depth_opts=seq(8, 14, 1),
           learn_rate_opts=c(0.01, 0.02),
           ## search a large space of row sampling rates per tree
-          sample_rate = seq(0.4,1,0.2),                                             
-          
+          sample_rate = seq(0.4,1,0.2),
+
           ## search a large space of column sampling rates per split
-          col_sample_rate_opts = seq(0.4,1,0.2),                                         
-          
+          col_sample_rate_opts = seq(0.4,1,0.2),
+
           ## search a large space of column sampling rates per tree
-          col_sample_rate_per_tree_opts = seq(0.4,1,0.2),                                
-          
+          col_sample_rate_per_tree_opts = seq(0.4,1,0.2),
+
           ## search a large space of how column sampling per split should change as a function of the depth of the split
-          col_sample_rate_change_per_level_opts = seq(0.9,1.1,0.1),                      
-          
+          col_sample_rate_change_per_level_opts = seq(0.9,1.1,0.1),
+
           ## search a large space of the number of min rows in a terminal node
           min_rows_opts = c(5, 10, 15, 20),
-          
+
           ## search a large space of the number of bins for split-finding for continuous and integer columns
-          nbins_opts = 2^seq(4,10,1),                                                     
-          
+          nbins_opts = 2^seq(4,10,1),
+
           ## search a large space of the number of bins for split-finding for categorical columns
-          nbins_cats_opts = 2^seq(4,10,1),                                                
-          
+          nbins_cats_opts = 2^seq(4,10,1),
+
           ## search a few minimum required relative error improvement thresholds for a split to happen
-          min_split_improvement_opts = c(1e-8, 1e-6, 1e-4),                               
-          
+          min_split_improvement_opts = c(1e-8, 1e-6, 1e-4),
+
           ## try all histogram types (QuantilesGlobal and RoundRobin are good for numeric columns with outliers)
           histogram_type_opts = c("UniformAdaptive","QuantilesGlobal","RoundRobin"),
 	  strategy="RandomDiscrete"
@@ -90,13 +93,14 @@ Here is the wrapper written to do the model fit.
 ```{r}
 
 baseline.fit = function(hp, sc, grid_id, seed=SEED) {
+        h2o.connect()
         h2o.grid.helper(
-                        XYTrain.h2o, 
-                        XYValidation.h2o, 
+                        XYTrain.h2o,
+                        XYValidation.h2o,
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
-                        algorithm="gbm", 
+                        algorithm="gbm",
                         grid_id=grid_id,
                         seed = seed
                         )
@@ -107,36 +111,41 @@ Now lets train a few models. We train a few models a few times to compare learni
 
 ```{r training, cache=TRUE}
 # TODO: Register a parallel backend using snow/doParallel
-# Run the for each loop 
+# Run the for each loop
 # Get Cluster spec from h2o cluster.
 # Register parallel backend for that cluster
 # train the grids
 instances = getExistingInstancesPublicDNS()
 print(instances)
 live_instances = instances[[2]]
+# The snow cluster is used if I want to execute the grid on multiple machines. A regular cluster is used if
 spec = clusterSpecFromInstances(live_instances)
-
-#cl <- parallel::makeCluster(rep(spec, ncores_p));
-
-clus = registerDoParallelWrapper(log.file.prefix="gbm.cluster", max.cores=6, cluster_spec=spec)
+clus = registerDoSNOWCluster(spec, SNOW.PORT, CORES.PER.MACHINE)
 # foreach is quite expensive to just have iterators over all the hyper params so we have multiple grids and we iterate only over learning rate and depth
 sc=search_criteria.gbm
 hp=hyper_params.gbm
 grids = foreach::foreach(
 		nx = itertools::product(
 		    max_depth = hp$max_depth,
-		    learn_rate = hp$learn_rate,
-		    grid_id = length(hp$max_depth)*length(hp$learn_rate))
-		) %do% {
-			hp$max_depth = nx$max_depth
-			hp$learn_rate = nx$learn_rate 
+		    learn_rate = hp$learn_rate
+		    ),
+		grid_id = iter(1:(length(hp$max_depth)*length(hp$learn_rate))),
+                .packages=c("h2o", "dplyr", "magrittr")) %dopar% {
+			max_depth = nx$max_depth
+			learn_rate = nx$learn_rate
+			hp_t = hp
+		        hp_t$max_depth = max_depth
+		        hp_t$learn_rate = learn_rate
+
 			return(baseline.fit(
-			       hp=hp, 
-			       sc=sc, 
-			       grid_id =grid_id,
+			       hp=hp_t,
+			       sc=sc,
+			       grid_id=grid_id,
 			       seed = as.integer(runif(1, 1e5, 1e6))))
-						
+
+
 		}
+
 ```
 
 

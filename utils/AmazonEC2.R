@@ -3,8 +3,8 @@ library(foreach)
 # *********************************************************************************************************************
 # NOTE: install itissid/aws.ec2 to use this instead of cloudyr/aws.ec2. The original one contains bugs that I fixed.
 # *********************************************************************************************************************
-# Embarrasingly simple parallelism using AWS. Often I will start the cluster using startCluster. however incase I want to 
-# do spotBidding for large instances I can chose to 
+# Embarrasingly simple parallelism using AWS. Often I will start the cluster using startCluster. however incase I want to
+# do spotBidding for large instances I can chose to
 # start cluster here, ami is based on a "worker node" machine image that I created
 # We can only have 20 instances running at once without prior permission from amazon.
 # Don't forget to source your default credentials:
@@ -23,9 +23,9 @@ library(foreach)
 #  stopCluster(clust)
 ## stops the SNOW cluster
 #  terminateCluster(cl)
-# terminates the EC2 worker instances, so billing stops.  
+# terminates the EC2 worker instances, so billing stops.
 
-# need to re-run these functions from AWS.tools so that they are added to the namespace 
+# need to re-run these functions from AWS.tools so that they are added to the namespace
 sleep.while.pending <- function(instances, sleep.time=2,verbose=TRUE) {
     while(pending.instance(instances)) {
         if(verbose) { cat(".") }
@@ -56,7 +56,7 @@ pending.instance <- function(instances ) {
 createSgNameFromTime = function() {
     t = lubridate::now()
     yymmdd_hhmmss =  paste(
-      c(lubridate::year(t), lubridate::month(t), lubridate::day(t), 
+      c(lubridate::year(t), lubridate::month(t), lubridate::day(t),
         lubridate::hour(t), lubridate::day(t), lubridate::minute(t)),
       sep="", collapse="_")
     return(paste("sg_", yymmdd_hhmmss, sep="", collapse=""))
@@ -69,23 +69,23 @@ startCluster <- function (ami,
                           instance.type,
                           keypair="sid-aws-key", # This is needed just for access
                           security.group = "sg-ec2b7c9f",
-                          verbose = TRUE) 
+                          verbose = TRUE)
 {
     # Assume the keys are in the default ~/.aws/credentials file for this instance.
-    #cmd <- paste("ec2-run-instances", ami, "--show-empty-fields", 
-    #    "--key", key, "--instance-count", instance.count, "--instance-type", 
+    #cmd <- paste("ec2-run-instances", ami, "--show-empty-fields",
+    #    "--key", key, "--instance-count", instance.count, "--instance-type",
     #    instance.type, "--group",security.groups)
     subnet = aws.ec2::describe_subnets()
      # SEE AWS for what this group is.
     # Need to add a key pair and the private file to the started instances.
     # Also I want to add it to the .ssh/config files to manage ssh without password.
     res = aws.ec2::run_instances(
-           ami, 
-           type=instance.type, 
-           min=instance.count, 
-           max=instance.count, 
+           ami,
+           type=instance.type,
+           min=instance.count,
+           max=instance.count,
            keypair=keypair,
-           subnet=subnet[[1]], 
+           subnet=subnet[[1]],
            sgroup=security.group,
            )
     instances = as.character(sapply(res, function(x) as.character(x$instanceId[[1]])))
@@ -116,7 +116,7 @@ disassocWithEIP = function() {
     elastic_ips = aws.ec2::describe_ips()
     # must be the same number
     res = mapply(function(eip) {
-                     print(paste("disassociating: ", eip$allocationId)); aws.ec2::disassociate_ip(eip)}, 
+                     print(paste("disassociating: ", eip$allocationId)); aws.ec2::disassociate_ip(eip)},
                      elastic_ips)
     return(res)
 }
@@ -126,7 +126,7 @@ disassocWithEIP = function() {
 
 getExistingInstancesPublicDNS = function() {
     sapply(aws.ec2::describe_instances(), function(x) {
-        sapply(x$instancesSet, function(instance) instance$dnsName) 
+        sapply(x$instancesSet, function(instance) instance$dnsName)
     })
 }
 
@@ -140,13 +140,13 @@ getExistingInstancesPrivateDNS = function() {
 # Private and helper routines. Don't use these directly.
 getExistingInstancesAttr = function(attribute) {
     sapply(aws.ec2::describe_instances(), function(x) {
-        sapply(x$instancesSet, function(instance) instance[[attribute]]) 
+        sapply(x$instancesSet, function(instance) instance[[attribute]])
     })
 }
 clusterSpecFromInstances = function(instances) {
     instances = as.character(instances)
     names(instances) = rep("host", length(instances))
-    return(instances)
+    return(as.list(instances))
 }
 
 .getPrivateDNSFromReservations = function(reservations) {

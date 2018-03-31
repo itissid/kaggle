@@ -4,15 +4,18 @@ registerDoParallelWrapper = function(max.cores = 4, log.file.prefix="generic_clu
     ncores_p = min(ifelse(is.na(ncores_p), 4, ncores_p), max.cores)
 
     d = format(Sys.time(), "%Y%m%d-%H-%M-%S")
-    dated.filename = paste(log.file.prefix, d, sep="_")
-    if(!dir.exists("log/")) {
-       dir.create("log/") 
-    }
-    dated.file.path = paste('log/', dated.filename, '.log', sep="")
-    cl <- parallel::makeCluster(rep(cluster.spec, ncores_p), outfile=dated.file.path);
+    dated.filename = paste0(paste(log.file.prefix, d, sep="_"), ".log")
+    cl <- parallel::makeCluster(rep(cluster.spec, ncores_p), outfile=dated.filename);
     doParallel::registerDoParallel(cl)
     flog.info(paste("Logging cluster output to", dated.file.path)) 
     return(cl)
+}
+
+registerDoSNOWCluster = function(spec, port, ncores.per.machine) {
+    snow::setDefaultClusterOptions(port=port)
+    clus = snow::makeCluster(rep(spec, ncores.per.machine), type="SOCK")
+    doSNOW::registerDoSNOW(clus)
+    return(clus)
 }
 
 stopParallelCluster = function(clus) {
