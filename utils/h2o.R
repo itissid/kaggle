@@ -93,3 +93,20 @@ h2o.createPredictionsFromModel = function(
         #h2o.rm(c("XPredict.1", "XPredict.2", "XPredict.3"))
 	return(predictions)
 }
+
+
+h2o.gridSaver = function(grid.ids, results.dir="results/") {
+    for(g.id in grid.ids) {
+        gid.dir = paste0(getwd(),"/", results.dir,"/", g.id)
+        if(!dir.exists(gid.dir)) {
+            dir.create(gid.dir, recursive=TRUE)
+        }
+        g = h2o.getGrid(g.id) 
+        for(m.id in g@model_ids) {
+            m = h2o.getModel(m.id)
+            mid.dir = paste0(gid.dir,"/", g.id)
+            print(paste0("Saving ", m.id, " to ", mid.dir))
+            h2o.saveModel(m, mid.dir , force=TRUE)
+        }
+    }
+}
