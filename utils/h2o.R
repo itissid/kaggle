@@ -1,4 +1,5 @@
 library(h2o)
+library(futile.logger)
 # Make a grid based on type of algo
 h2o.grid.helper = function(
            XYTrain, XYTest, independentCols,
@@ -94,19 +95,66 @@ h2o.createPredictionsFromModel = function(
 	return(predictions)
 }
 
-
+# When I trained the GBM models on the grid i had to save them using this utility to disk to look at them later.
+# the structure of the data is:
+#results/2018_3_30  -> Top level directory(keep this unique because grid id's can be the same across runs)
+#	1/ -> Grid ID's
+#	    1_model_1  -> Unique model id's
+#	    1_model_2
+#	2/
+#	    2_model_1
+#	    2_model_2
 h2o.gridSaver = function(grid.ids, results.dir="results/") {
     for(g.id in grid.ids) {
-        gid.dir = paste0(getwd(),"/", results.dir,"/", g.id)
+        gid.dir =file.path(getwd(), results.dir, g.id)
         if(!dir.exists(gid.dir)) {
             dir.create(gid.dir, recursive=TRUE)
-        }
+        } else {
+	   flog.error(paste0("Results dir", results.dir, " should be empty"))
+	}
         g = h2o.getGrid(g.id) 
         for(m.id in g@model_ids) {
             m = h2o.getModel(m.id)
-            mid.dir = paste0(gid.dir,"/", g.id)
-            print(paste0("Saving ", m.id, " to ", mid.dir))
-            h2o.saveModel(m, mid.dir , force=TRUE)
+            print(paste0("Saving ", m.id, " to ", gid.dir))
+            h2o.saveModel(m, gid.dir , force=TRUE)
         }
     }
+}
+
+h2o.gridLoader = function(grid.ids, results.dir="results") {
+    models = list() 
+    for(g.id in grid.ids) {
+        gid.dir =file.path(getwd(), results.dir, g.id)
+        if(!dir.exists(gid.dir)) {
+		flog.error(paste0(gid.dir, " does not exist. Can't load grid"))
+		stopifnot(TRUE)
+        }
+        for(m.id_file in list.files(gid.dir, recursive=TRUE)) {
+	    m.id_file.path = file.path(gid.dir, m.id_file)
+            print(paste0("Loading ", m.id_file.path))
+            m = h2o.loadModel(m.id_file.path)
+	    models[[m@model_id]] = m
+        }
+    }
+    return(models)
+}
+,
+model_summaries_from_loaded_models = function(models) {
+  display_vars = c(
+       "model_id", "nbins", "nbins_top_level", "nbins_cats", "learn_rate", "ntrees", "min_rows", "nbins",  "sample_rate", "col_sample_rate", "col_sample_rate_change_per_level", "col_sample_rate_per_tree", "min_split_improvement", "histogram_type")
+    summaryForEach <- function(m) {
+        perf.v = h2o.performance(m, valid=T)
+        perf.t = h2o.performance(m, train=T)
+        params = m@allparameters %>% data.frame %>%
+            dplyr::select_at(vars(display_vars)) %>% 
+            dplyr::distinct()
+        m.summary = m@model$model_summary %>% 
+            data.frame %>%
+            dplyr::mutate(validation_rmse = perf.v %>% h2o.rmse()) %>%
+            dplyr::mutate(train_rmse = perf.t %>% h2o.rmse()) %>%
+            select(-model_size_in_bytes)
+        return(cbind(params, m.summary))
+    }
+    ms = Map(summaryForEach, models)
+    Reduce(rbind, ms)
 }
