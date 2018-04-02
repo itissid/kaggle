@@ -19,11 +19,11 @@
 }
 
 
-.registerDoSNOWCluster = function(spec, ncores.per.machine, log.file.prefix="generic_snow_cluster", port) {
+.registerDoSNOWCluster = function(spec, port, ncores.per.machine, log.file.prefix="generic_snow_cluster", port) {
     d = format(Sys.time(), "%Y%m%d-%H-%M-%S")
     dated.filename = paste0(paste(log.file.prefix, d, sep="_"), ".log")
     snow::setDefaultClusterOptions(port=port)
-    clus = snow::makeCluster(spec, type="SOCK",outfile=dated.file)
+    clus = snow::makeCluster(spec, type="SOCK",outfile=dated.filename)
     doSNOW::registerDoSNOW(clus)
     return(clus)
 }
@@ -55,7 +55,7 @@ registerCluster = function(
 		cls = .registerDoParallelWrapper(ncores, list(host="localhost"))
 	} else {
 		spec = c(sapply(instances.opts, function(x) rep(list(x), max.cores.per.machine)))
-		cls = .registerDoSNOWCluster(spec, max.cores.per.machine)
+		cls = .registerDoSNOWCluster(spec, port, max.cores.per.machine)
 	}
 	return(cls)
 }

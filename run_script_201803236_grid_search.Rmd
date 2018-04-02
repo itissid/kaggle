@@ -92,11 +92,11 @@ list[search_criteria.gbm, hyper_params.gbm] =
 Here is the wrapper written to do the model fit.
 ```{r}
 
-baseline.fit = function(hp, sc, grid_id, seed=SEED) {
+baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
         h2o.connect()
         h2o.grid.helper(
-                        XYTrain.h2o,
-                        XYValidation.h2o,
+                        h2o.getFrame("XYTrain"),
+                        h2o.getFrame("XYValidation"),
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
@@ -125,6 +125,7 @@ clus = registerDoSNOWCluster(spec, SNOW.PORT, CORES.PER.MACHINE)
 # foreach is quite expensive to just have iterators over all the hyper params so we have multiple grids and we iterate only over learning rate and depth
 sc=search_criteria.gbm
 hp=hyper_params.gbm
+progress <- function() cat('.')
 train.grid.wrapper = function(hp, sc) {
     foreach::foreach(
         nx = itertools::product(
@@ -132,7 +133,9 @@ train.grid.wrapper = function(hp, sc) {
             learn_rate = hp$learn_rate
             ),
         grid_id = iter(1:(length(hp$max_depth)*length(hp$learn_rate))),
-        .packages=c("h2o", "dplyr", "magrittr")) %dopar% {
+        .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
+        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars")
+        .options.snow=list(progress=progress)) %dopar% {
                 max_depth = nx$max_depth
                 learn_rate = nx$learn_rate
                 hp_t = hp
@@ -239,5 +242,34 @@ hp$col_sample_rate = seq(0.4, 0.8, 0.1)
 hp$sample_rate = seq(0.4, 0.8, 0.1)
 hp$nbins_cats= 2^seq(4,6,1)
 hp$histogram_type= c("QuantilesGlobal", "RoundRobin")
+```
+
+Before we do another grid search to improve our confidence in the parameters. Lets do some baseline predictions after training the top 3 models on the entire data set. and we do so by validation.
+```{r}
+sorted.summaries = summaries %>% arrange(validation_rmse)
+topk.ids = sorted.summaries %>% pull(model_id) %>% as.character
+
+retrainWrapper <- function(gbm, train.df, validation.df) {
+    return(do.call(h2o.gbm,
+        ## update pasameters in place
+        {
+          p <- gbm@parameters
+          p$model_id = NULL          ## do not overwrite the original grid model
+          p$training_frame = train.df      ## use the full dataset
+          p$validation_frame = validation.df  ## no validation frame
+          p$nfolds = 5               ## cross-validation
+          p
+     }))
+}
+
+cvgbms = list()
+for (i in 1:5) {
+  gbm <- h2o.getModel(topk.ids[[i]])
+  cvgbm <- retrainWrapper(gbm, 
+                          h2o.rbind(XYTrain.h2o, XYValidation.h2o),
+                          XYTest.h2o)
+  cvgbms[[topk.ids[[i]]]] = cvgbm
+  print(cvgbm)
+}
 ```
 
