@@ -44,7 +44,7 @@ CORES.PER.MACHINE=4 # For the multi machine AWS cluster
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 
-list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"))
+list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"), seed=SEED)
 independent.vars = colnames(tr.baseline %>% select(-logerror))
 
 # XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
