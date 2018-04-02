@@ -27,15 +27,13 @@ header-includes:
 ```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE}
 library(dplyr)
 library(magrittr)
-library(gridExtra)
 library(ggplot2)
 library(h2o)
-library(gridExtra)
 source("utils/AmazonEC2.R")
 source("h2o/source-for-rmd.R")
 SEED=123456
 SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
-CORES.PER.MACHINE=4 # For the multi machine AWS cluster
+CORES.PER.MACHINE=2 # For the multi machine AWS cluster
 ```
 
 ##### The task: To determine the other parameters of the grid
@@ -94,6 +92,8 @@ Here is the wrapper written to do the model fit.
 
 baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
         h2o.connect()
+        m1 = paste0(names(hp), hp, collapse='\n')
+        cat(paste0("Grid executing with params: \n", m1), file=stdout())
         h2o.grid.helper(
                         h2o.getFrame("XYTrain"),
                         h2o.getFrame("XYValidation"),
@@ -104,6 +104,7 @@ baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
                         grid_id=grid_id,
                         seed = seed
                         )
+        cat("Done", file=stdout())
 }
 ```
 
@@ -121,7 +122,7 @@ live_instances = instances[[2]]
 # The snow cluster is used if I want to execute the grid on multiple machines. A regular cluster is used if on local.
 
 spec = clusterSpecFromInstances(live_instances)
-clus = registerDoSNOWCluster(spec, SNOW.PORT, CORES.PER.MACHINE)
+clus = registerCluster(localOnly=FALSE, port=SNOW.PORT, instances.opts=spec, CORES.PER.MACHINE)
 # foreach is quite expensive to just have iterators over all the hyper params so we have multiple grids and we iterate only over learning rate and depth
 sc=search_criteria.gbm
 hp=hyper_params.gbm
@@ -134,7 +135,7 @@ train.grid.wrapper = function(hp, sc) {
             ),
         grid_id = iter(1:(length(hp$max_depth)*length(hp$learn_rate))),
         .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
-        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars")
+        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars"),
         .options.snow=list(progress=progress)) %dopar% {
                 max_depth = nx$max_depth
                 learn_rate = nx$learn_rate

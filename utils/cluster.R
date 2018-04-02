@@ -19,7 +19,7 @@
 }
 
 
-.registerDoSNOWCluster = function(spec, port, ncores.per.machine, log.file.prefix="generic_snow_cluster", port) {
+.registerDoSNOWCluster = function(spec, port, ncores.per.machine, log.file.prefix="generic_snow_cluster") {
     d = format(Sys.time(), "%Y%m%d-%H-%M-%S")
     dated.filename = paste0(paste(log.file.prefix, d, sep="_"), ".log")
     snow::setDefaultClusterOptions(port=port)

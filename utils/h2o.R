@@ -138,7 +138,7 @@ h2o.gridLoader = function(grid.ids, results.dir="results") {
     }
     return(models)
 }
-,
+
 model_summaries_from_loaded_models = function(models) {
   display_vars = c(
        "model_id", "nbins", "nbins_top_level", "nbins_cats", "learn_rate", "ntrees", "min_rows", "nbins",  "sample_rate", "col_sample_rate", "col_sample_rate_change_per_level", "col_sample_rate_per_tree", "min_split_improvement", "histogram_type")
