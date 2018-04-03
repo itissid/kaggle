@@ -27,15 +27,13 @@ header-includes:
 ```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE}
 library(dplyr)
 library(magrittr)
-library(gridExtra)
 library(ggplot2)
 library(h2o)
-library(gridExtra)
 source("utils/AmazonEC2.R")
 source("h2o/source-for-rmd.R")
 SEED=123456
 SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
-CORES.PER.MACHINE=4 # For the multi machine AWS cluster
+CORES.PER.MACHINE=2 # For the multi machine AWS cluster
 ```
 
 ##### The task: To determine the other parameters of the grid
@@ -44,7 +42,7 @@ CORES.PER.MACHINE=4 # For the multi machine AWS cluster
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 
-list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"))
+list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"), seed=SEED)
 independent.vars = colnames(tr.baseline %>% select(-logerror))
 
 # XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
@@ -92,11 +90,13 @@ list[search_criteria.gbm, hyper_params.gbm] =
 Here is the wrapper written to do the model fit.
 ```{r}
 
-baseline.fit = function(hp, sc, grid_id, seed=SEED) {
+baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
         h2o.connect()
+        m1 = paste0(names(hp), hp, collapse='\n')
+        cat(paste0("Grid executing with params: \n", m1), file=stdout())
         h2o.grid.helper(
-                        XYTrain.h2o,
-                        XYValidation.h2o,
+                        h2o.getFrame("XYTrain"),
+                        h2o.getFrame("XYValidation"),
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
@@ -104,6 +104,7 @@ baseline.fit = function(hp, sc, grid_id, seed=SEED) {
                         grid_id=grid_id,
                         seed = seed
                         )
+        cat("Done", file=stdout())
 }
 ```
 
@@ -118,34 +119,158 @@ Now lets train a few models. We train a few models a few times to compare learni
 instances = getExistingInstancesPublicDNS()
 print(instances)
 live_instances = instances[[2]]
-# The snow cluster is used if I want to execute the grid on multiple machines. A regular cluster is used if
+# The snow cluster is used if I want to execute the grid on multiple machines. A regular cluster is used if on local.
+
 spec = clusterSpecFromInstances(live_instances)
-clus = registerDoSNOWCluster(spec, SNOW.PORT, CORES.PER.MACHINE)
+clus = registerCluster(localOnly=FALSE, port=SNOW.PORT, instances.opts=spec, CORES.PER.MACHINE)
 # foreach is quite expensive to just have iterators over all the hyper params so we have multiple grids and we iterate only over learning rate and depth
 sc=search_criteria.gbm
 hp=hyper_params.gbm
-grids = foreach::foreach(
-		nx = itertools::product(
-		    max_depth = hp$max_depth,
-		    learn_rate = hp$learn_rate
-		    ),
-		grid_id = iter(1:(length(hp$max_depth)*length(hp$learn_rate))),
-                .packages=c("h2o", "dplyr", "magrittr")) %dopar% {
-			max_depth = nx$max_depth
-			learn_rate = nx$learn_rate
-			hp_t = hp
-		        hp_t$max_depth = max_depth
-		        hp_t$learn_rate = learn_rate
+progress <- function() cat('.')
+train.grid.wrapper = function(hp, sc) {
+    foreach::foreach(
+        nx = itertools::product(
+            max_depth = hp$max_depth,
+            learn_rate = hp$learn_rate
+            ),
+        grid_id = iter(1:(length(hp$max_depth)*length(hp$learn_rate))),
+        .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
+        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars"),
+        .options.snow=list(progress=progress)) %dopar% {
+                max_depth = nx$max_depth
+                learn_rate = nx$learn_rate
+                hp_t = hp
+                hp_t$max_depth = max_depth
+                hp_t$learn_rate = learn_rate
 
-			return(baseline.fit(
-			       hp=hp_t,
-			       sc=sc,
-			       grid_id=grid_id,
-			       seed = as.integer(runif(1, 1e5, 1e6))))
+                return(baseline.fit(
+                       hp=hp_t,
+                       sc=sc,
+                       grid_id=grid_id,
+                       seed = as.integer(runif(1, 1e5, 1e6))))
 
 
-		}
+        }
+}
 
 ```
+```{r}
+train.grid.wrapper(hyper_params.gbm, search_criteria.gbm)
+```
 
+
+Lets look at the top 40 models in the grid. The folling is a sample of 106 models which is small as compared to the entire grid. A larger sample would be better. But there are still some useful observations that come out:
+```{r, eval=FALSE}
+
+     model_id nbins_top_level nbins_cats learn_rate min_rows sample_rate col_sample_rate col_sample_rate_per_tree
+8_model_11            1024         16       0.02       15         0.6             0.4                      0.8
+12_model_2            1024         16       0.02       10         0.8             0.4                      0.6
+ 6_model_9            1024         64       0.02       20         0.8             0.4                      0.8
+13_model_1            1024         16       0.01       20         0.4             0.8                      0.8
+ 2_model_2            1024         32       0.02       15         1.0             0.6                      0.8
+ 5_model_5            1024         16       0.01       20         0.6             0.4                      0.6
+12_model_6            1024         16       0.02       15         0.6             0.4                      0.8
+ 5_model_3            1024         16       0.01       20         0.6             0.4                      0.6
+ 8_model_3            1024         32       0.02       20         0.8             1.0                      0.4
+ 4_model_1            1024         16       0.02       20         0.6             0.8                      0.6
+ 8_model_2            1024         64       0.02       20         0.6             0.6                      1.0
+10_model_4            1024         64       0.02       20         0.4             0.8                      0.4
+ 7_model_0            1024         16       0.01       10         0.8             0.6                      0.6
+ 3_model_4            1024         32       0.01       20         0.4             0.6                      0.8
+12_model_1            1024         64       0.02       10         0.6             0.6                      0.4
+14_model_9            1024        128       0.02       20         1.0             0.6                      1.0
+ 1_model_5            1024         16       0.01       20         0.8             0.8                      0.8
+10_model_3            1024         32       0.02       20         1.0             0.4                      0.4
+6_model_10            1024         16       0.02       15         1.0             0.6                      1.0
+ 5_model_0            1024         32       0.01       15         0.6             1.0                      0.6
+14_model_4            1024         32       0.02       15         0.8             0.6                      0.6
+ 9_model_0            1024         16       0.01       20         0.4             0.4                      0.4
+ 9_model_1            1024        128       0.01       10         0.8             1.0                      0.6
+11_model_5            1024         16       0.01       10         1.0             1.0                      0.8
+10_model_7            1024         64       0.02        5         0.4             0.4                      0.6
+ 6_model_3            1024         32       0.02       10         0.8             1.0                      1.0
+ 2_model_3            1024         16       0.02       15         0.6             1.0                      0.4
+ 2_model_5            1024        128       0.02       15         0.6             1.0                      0.6
+14_model_0            1024        128       0.02       10         0.6             1.0                      0.4
+13_model_0            1024        128       0.01       15         0.6             0.6                      0.4
+ 4_model_8            1024        256       0.02       20         1.0             0.4                      0.6
+ 7_model_3            1024        128       0.01       15         1.0             0.6                      0.8
+10_model_5            1024         32       0.02       15         0.4             0.8                      0.6
+ 9_model_4            1024         64       0.01       20         0.8             0.8                      0.4
+ 2_model_1            1024         16       0.02        5         1.0             0.8                      0.8
+ 9_model_5            1024        256       0.01       20         1.0             0.6                      0.6
+ 4_model_4            1024         32       0.02        5         0.8             0.6                      0.4
+ 9_model_2            1024         64       0.01        5         0.6             0.6                      0.6
+ 8_model_6            1024         64       0.02        5         0.4             1.0                      0.8
+ 3_model_3            1024         16       0.01       15         0.4             0.4                      0.8
+min_split_improvement  histogram_type  mean_depth validation_rmse train_rmse
+                1e-08 QuantilesGlobal    11.00000       0.1516343  0.1563150
+                1e-04 QuantilesGlobal    12.41071       0.1516610  0.1534670
+                1e-06 QuantilesGlobal    10.00000       0.1517007  0.1554136
+                1e-08 QuantilesGlobal    14.00000       0.1517044  0.1571480
+                1e-08 QuantilesGlobal     8.00000       0.1517241  0.1566878
+                1e-08 UniformAdaptive    10.00000       0.1517606  0.1578543
+                1e-04      RoundRobin    12.85057       0.1517667  0.1554486
+                1e-06 QuantilesGlobal    10.00000       0.1517683  0.1582653
+                1e-06 QuantilesGlobal    11.00000       0.1517714  0.1551242
+                1e-06      RoundRobin     9.00000       0.1517815  0.1576086
+                1e-06      RoundRobin    11.00000       0.1517832  0.1573830
+                1e-06      RoundRobin    12.00000       0.1517834  0.1565651
+                1e-08 QuantilesGlobal    11.00000       0.1517872  0.1549169
+                1e-08      RoundRobin     9.00000       0.1518475  0.1590472
+                1e-04      RoundRobin    12.72868       0.1518519  0.1541744
+                1e-04 UniformAdaptive    14.00000       0.1518530  0.1542586
+                1e-04      RoundRobin     8.00000       0.1518616  0.1587867
+                1e-08      RoundRobin    12.00000       0.1518629  0.1536473
+                1e-04 QuantilesGlobal    10.00000       0.1518635  0.1569732
+                1e-08 QuantilesGlobal    10.00000       0.1518654  0.1574204
+                1e-06      RoundRobin    14.00000       0.1518671  0.1532246
+                1e-06 QuantilesGlobal    12.00000       0.1518779  0.1581619
+                1e-08 QuantilesGlobal    12.00000       0.1518874  0.1519555
+```
+##### Tuning lessons
+- nbins_cats of 16-64 range is enough. The top 20 values it leans more towards 16, 32 than 64
+- the depth of the top trees is still between 8-14 though its centered strongly around 10-12.
+- sample rate is happy being between 0.6-0.8. Although there are two values in there that are 1 and 0.4 in the top 20
+- col_sample_rate for top models is between 0.4-0.8 for the most part
+- The QuantilesGlobal and RoundRobin are much better choices of histogram
+- So lets narrow the tuning grid with the following changes:
+
+```{r}
+
+hp=hyper_params.gbm
+hp$col_sample_rate = seq(0.4, 0.8, 0.1)
+hp$sample_rate = seq(0.4, 0.8, 0.1)
+hp$nbins_cats= 2^seq(4,6,1)
+hp$histogram_type= c("QuantilesGlobal", "RoundRobin")
+```
+
+Before we do another grid search to improve our confidence in the parameters. Lets do some baseline predictions after training the top 3 models on the entire data set. and we do so by validation.
+```{r}
+sorted.summaries = summaries %>% arrange(validation_rmse)
+topk.ids = sorted.summaries %>% pull(model_id) %>% as.character
+
+retrainWrapper <- function(gbm, train.df, validation.df) {
+    return(do.call(h2o.gbm,
+        ## update pasameters in place
+        {
+          p <- gbm@parameters
+          p$model_id = NULL          ## do not overwrite the original grid model
+          p$training_frame = train.df      ## use the full dataset
+          p$validation_frame = validation.df  ## no validation frame
+          p$nfolds = 5               ## cross-validation
+          p
+     }))
+}
+
+cvgbms = list()
+for (i in 1:5) {
+  gbm <- h2o.getModel(topk.ids[[i]])
+  cvgbm <- retrainWrapper(gbm, 
+                          h2o.rbind(XYTrain.h2o, XYValidation.h2o),
+                          XYTest.h2o)
+  cvgbms[[topk.ids[[i]]]] = cvgbm
+  print(cvgbm)
+}
+```
 
