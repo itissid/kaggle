@@ -5,14 +5,12 @@
 
 # use registerCluster with locaOnly instead of using this
 .registerDoParallelWrapper = function(
-	max.cores, cluster.spec, log.file.prefix="generic_doparallel_cluster") {
+	ncores, cluster.spec, log.file.prefix="generic_doparallel_cluster") {
     # Extracts a few things I used to do repeatedly
-    ncores_p =  parallel::detectCores()
-    ncores_p = min(ifelse(is.na(ncores_p), 4, ncores_p), max.cores)
 
     d = format(Sys.time(), "%Y%m%d-%H-%M-%S")
     dated.filename = paste0(paste(log.file.prefix, d, sep="_"), ".log")
-    cl <- parallel::makeCluster(rep(cluster.spec, ncores_p), outfile=dated.filename);
+    cl <- parallel::makeCluster(rep(cluster.spec, ncores), outfile=dated.filename);
     doParallel::registerDoParallel(cl)
     flog.info(paste("Logging cluster output to", dated.filename)) 
     return(cl)

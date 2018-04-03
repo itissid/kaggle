@@ -26,7 +26,7 @@ hyper_params_search_crit = function(
             col_sample_rate_per_tree_opts = 0.8,
 	    col_sample_rate_change_per_level_opts = 0.9,
 	    min_split_improvement_opts=1e-05,
-	    nbins_opts = 20, 
+	    nbins_opts = 20,
 	    nbins_cats_opts = 1024,
 	    histogram_type_opts = c("AUTO", "UniformAdaptive", "Random", "QuantilesGlobal", "RoundRobin"),
             strategy="Cartesian") {
@@ -44,11 +44,11 @@ hyper_params_search_crit = function(
                          col_sample_rate = col_sample_rate_opts,
                          col_sample_rate_per_tree = col_sample_rate_per_tree_opts,
 			 col_sample_rate_change_per_level = col_sample_rate_change_per_level_opts,
-			nbins = nbins_opts,			
+			nbins = nbins_opts,
 			nbins_cats = nbins_cats_opts,
 			min_split_improvement = min_split_improvement_opts,
 			histogram_type = histogram_type_opts
-			 
+
     )
 
     search_criteria = list(
@@ -169,7 +169,7 @@ prepareDataWrapper.h2o.gbm.baseline = function(
 # gbm <- h2o.getModel(sortedGrid@model_ids[[1]])
 #
 
-createPredictionsFromModel = function(gbm.model, X, rlist) {
+h2o.createPredictionsFromModel = function(gbm.model, X, rlist) {
         getDateCode = function(d, rlist) {rlist$date %>% dplyr::filter(date==as.Date(d)) %>% dplyr::pull(date_coded)}
 	dates = vapply(FUN=getDateCode, X=c("2016-10-01", "2016-11-01", "2016-12-01"), rlist, FUN.VALUE=1, USE.NAMES=F)
 	XPredict.1 = as.h2o(X  %>% mutate(date=dates[1]), destination_frame="XPredict.1")
@@ -193,3 +193,131 @@ createPredictionsFromModel = function(gbm.model, X, rlist) {
 	return(predictions)
 }
 
+modelListFromGrids = function(grid_id_prefix, N) {
+    doc = "
+    This utility was useful for extracting the models from multiple grids
+    with grid id as grid_id_prefix and 1:N as suffix
+    "
+    sapply(X=1:N,
+           FUN=function(x) {
+               grid.ids = h2o.getGrid(paste(grid_id_prefix, x, sep=''))
+               sapply(X=grid.ids@model_ids, FUN=h2o.getModel)
+           })
+}
+
+# This is a routine you can call that parallelizes the three predictions on dates 2016/10-2016/12 for zillow data set using h2o
+h2o.createPredictionsFromModel.parallel = function(
+	    gbm.model_id, X, has.dates=FALSE) {
+        # It assumes that the h2o cluster is available on the remote machine
+        # Do prediction for three dates
+        # TODO: Consider parallel prediction for each of the 3 columns
+        predictions = foreach(
+                          i = iter(1:3),
+                          .combine=cbind,
+                          .packages=c("h2o", "magrittr")) %do% {
+            # Create a small h2o instance to do predictions on each data set
+            return(tryCatch({
+                h2o.connect()
+                gbm.model = h2o.getModel(gbm.model_id)
+                print(".")
+                if(has.dates == TRUE) {
+                   X = h2o.getFrame("XPredict") %>% as.data.frame %>%
+                       dplyr::mutate(date=predict.dates.numeric.codes[i]) %>%
+                       as.h2o
+                } else {
+                    X %<>% as.h2o
+                }
+                # Predictions are parallel
+                prediction = as.data.frame(h2o.predict(gbm.model, X))
+                print(paste0("..", i))
+                return(prediction)
+            }, error= function(e) {
+                print('Error!')
+                print(e)
+            }))
+        }
+
+	predictions = cbind(predictions, predictions)
+	colnames(predictions) = c("201610", "201611", "201612", "201710", "201711", "201712")
+	predictions$parcelid = X$id_parcel
+	print("....P")
+        # Cleanup
+        #h2o.rm(c("XPredict.1", "XPredict.2", "XPredict.3"))
+	return(predictions)
+}
+
+
+# When I trained the GBM models on the grid I had to save them using this utility to disk to look at them later.
+# the structure of the data saved on the disk is:
+#results/2018_3_30  -> Top level directory(keep this unique because grid id's can be the same across runs)
+#	1/ -> Grid ID's
+#	    1_model_1  -> Unique model id's
+#	    1_model_2
+#	2/
+#	    2_model_1
+#	    2_model_2
+h2o.gridSaver = function(grid.ids, results.dir="results/") {
+    for(g.id in grid.ids) {
+        if(!startsWith(results.dir, "/"))
+            gid.dir =file.path(getwd(), results.dir, g.id)
+        else
+            gid.dir=file.path(results.dir, g.id)
+        if(!dir.exists(gid.dir)) {
+            dir.create(gid.dir, recursive=TRUE)
+        } else {
+           flog.error(paste0("Results dir", results.dir, " should be empty"))
+            stopifnot(TRUE)
+        }
+        g = h2o.getGrid(g.id)
+        for(m.id in g@model_ids) {
+            m = h2o.getModel(m.id)
+            print(paste0("Saving ", m.id, " to ", gid.dir))
+            h2o.saveModel(m, gid.dir , force=TRUE)
+        }
+    }
+}
+
+# Load the models saved by h2o.gridSaver
+h2o.gridLoader = function(grid.ids, results.dir="results") {
+    models = list()
+    for(g.id in grid.ids) {
+        if(!startsWith(results.dir, "/"))
+            gid.dir =file.path(getwd(), results.dir, g.id)
+        else
+            gid.dir=file.path(results.dir, g.id)
+        if(!dir.exists(gid.dir)) {
+            flog.error(paste0(gid.dir, " does not exist. Can't load grid"))
+            stopifnot(TRUE)
+        }
+        for(m.id_file in list.files(gid.dir, recursive=TRUE)) {
+	    m.id_file.path = file.path(gid.dir, m.id_file)
+            print(paste0("Loading ", m.id_file.path))
+            m = h2o.loadModel(m.id_file.path)
+	    models[[m@model_id]] = m
+        }
+    }
+    return(models)
+}
+
+# For the models loaded by h2o.gridLoader recover the actual model summaries.
+model_summaries_from_loaded_models = function(models) {
+  display_vars = c(
+       "model_id", "nbins", "nbins_top_level", "nbins_cats", "learn_rate", "ntrees", "min_rows", "nbins",  "sample_rate", "col_sample_rate", "col_sample_rate_change_per_level", "col_sample_rate_per_tree", "min_split_improvement", "histogram_type")
+    summaryForEach <- function(m) {
+        perf.v = h2o.performance(m, valid=T)
+        perf.t = h2o.performance(m, train=T)
+        rt = m@model$runtime
+        params = m@allparameters %>% data.frame %>%
+            dplyr::select_at(vars(display_vars)) %>%
+            dplyr::distinct()
+        m.summary = m@model$model_summary %>%
+            data.frame %>%
+            dplyr::mutate(validation_rmse = perf.v %>% h2o.rmse()) %>%
+            dplyr::mutate(train_rmse = perf.t %>% h2o.rmse()) %>%
+            dplyr::mutate(runtime = rt %>% h2o.rmse()) %>%
+            select(-model_size_in_bytes)
+        return(cbind(params, m.summary))
+    }
+    ms = Map(summaryForEach, models)
+    Reduce(rbind, ms)
+}

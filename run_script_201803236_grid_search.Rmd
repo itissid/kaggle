@@ -33,14 +33,30 @@ source("utils/AmazonEC2.R")
 source("h2o/source-for-rmd.R")
 SEED=123456
 SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
+CLUSTER.NODE.IP='' # This would be the IP ADDESS of the h2o cluster
 CORES.PER.MACHINE=2 # For the multi machine AWS cluster
+REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_02_04_gbm"
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_02_04_gbm")
+if(!dir.exists(LOCAL.RESULTS.DIR)) {
+    dir.create(LOCAL.RESULTS.DIR, recursive=TRUE)
+}
 ```
 
-##### The task: To determine the other parameters of the grid
 
+##### The task: To determine the other parameters of the grid
+##### Main Points
+- Instead of cross validating a parameter space of size 10's of thousands. We narrow it first using Random grid search.
+- We choose the top `K`  models from this Random Grid search and instead cross validate each one of them(Like choosing exactly K parameters). I will choose 3 models to make prediction:
+    - The lowest average crossvalidated RMSE
+    - The model with the lowest cross validated SD
+    - The model with the lowest CV score(just for fun)
+
+TODO: Link a page to start the h2o cluster.
+Once you have started the cluster grab one of the IP's and stick it into the CLUSTER.NODE.IP variable
 ```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
+h2o.connect(ip=CLUSTER.NODE.IP)
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
-list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
+list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL, t.dates] =  prepareDataWrapper.h2o.gbm.baseline(dates.to.numeric=T, keep.dates=T)
 
 list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"), seed=SEED)
 independent.vars = colnames(tr.baseline %>% select(-logerror))
@@ -133,7 +149,7 @@ train.grid.wrapper = function(hp, sc) {
             max_depth = hp$max_depth,
             learn_rate = hp$learn_rate
             ),
-        grid_id = iter(1:(length(hp$max_depth)*length(hp$learn_rate))),
+        grid_id = iter(1:NGrids),
         .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
         .export=c("baseline.fit", "h2o.grid.helper", "independent.vars"),
         .options.snow=list(progress=progress)) %dopar% {
@@ -153,104 +169,111 @@ train.grid.wrapper = function(hp, sc) {
         }
 }
 
-```
-```{r}
-train.grid.wrapper(hyper_params.gbm, search_criteria.gbm)
+NGrids = length(hp$max_depth)*length(hp$learn_rate)
+pergrid.models = Reduce('*', Map(function(x, init) length(x), hp) )/NGrids
+flog.info(paste0( "parallel training ", NGrids , " grids with ", pergrid.models, " models each."))
+
 ```
 
+As you can see training so many grids can take a long time. Instead we will use a few of them. It is better to spawn another R Console for the rest of the notebook.
+```{r}
+models = train.grid.wrapper(hyper_params.gbm, search_criteria.gbm)
+```
+
+The grids above can take a long time to complete. But once a few 100 models have been trained we can just crack on with the analysis. Lets save the grids to disk and work offline with them.  You might want to source the code above and the constants to keep going. One issue with an h2o cluster is when interactive mode a failure on one node can cause models to dissapear.
+```{r, eval=FALSE}
+    h2o.connect(ip=CLUSTER.NODE.IP)
+    models = h2o.gridSaver(1:14, results.dir=REMOTE.RESULTS.DIR)
+```
+
+The above command saves the models to a remote machine.
+Copy the results to the local disk. Assuming you have access to the cluster you can execute the rsync command:
+```{r, eval=FALSE}
+cwd = getwd()
+rsync.command=paste0('mkdir -p results/grid; rsync -Pavz -e "ssh -i $(ls ~/.ssh/sid-aws-key.pem)"  ubuntu@', CLUSTER.NODE.IP ,':', REMOTE.RESULTS.DIR,' ', LOCAL.RESULTS.DIR)
+print(rsync.command)
+system(rsync.command)
+```
+
+Instead of loading models from h2o we load them from disk.
+```{r}
+models = h2o.gridLoader(1:14, results.dir=LOCAL.RESULTS.DIR)
+all_summaries = model_summaries_from_loaded_models(models) %>% arrange(validation_rmse)
+sorted.summaries = all_summaries %>% arrange(validation_rmse)
+```
 
 Lets look at the top 40 models in the grid. The folling is a sample of 106 models which is small as compared to the entire grid. A larger sample would be better. But there are still some useful observations that come out:
 ```{r, eval=FALSE}
 
-     model_id nbins_top_level nbins_cats learn_rate min_rows sample_rate col_sample_rate col_sample_rate_per_tree
-8_model_11            1024         16       0.02       15         0.6             0.4                      0.8
-12_model_2            1024         16       0.02       10         0.8             0.4                      0.6
- 6_model_9            1024         64       0.02       20         0.8             0.4                      0.8
-13_model_1            1024         16       0.01       20         0.4             0.8                      0.8
- 2_model_2            1024         32       0.02       15         1.0             0.6                      0.8
- 5_model_5            1024         16       0.01       20         0.6             0.4                      0.6
-12_model_6            1024         16       0.02       15         0.6             0.4                      0.8
- 5_model_3            1024         16       0.01       20         0.6             0.4                      0.6
- 8_model_3            1024         32       0.02       20         0.8             1.0                      0.4
- 4_model_1            1024         16       0.02       20         0.6             0.8                      0.6
- 8_model_2            1024         64       0.02       20         0.6             0.6                      1.0
-10_model_4            1024         64       0.02       20         0.4             0.8                      0.4
- 7_model_0            1024         16       0.01       10         0.8             0.6                      0.6
- 3_model_4            1024         32       0.01       20         0.4             0.6                      0.8
-12_model_1            1024         64       0.02       10         0.6             0.6                      0.4
-14_model_9            1024        128       0.02       20         1.0             0.6                      1.0
- 1_model_5            1024         16       0.01       20         0.8             0.8                      0.8
-10_model_3            1024         32       0.02       20         1.0             0.4                      0.4
-6_model_10            1024         16       0.02       15         1.0             0.6                      1.0
- 5_model_0            1024         32       0.01       15         0.6             1.0                      0.6
-14_model_4            1024         32       0.02       15         0.8             0.6                      0.6
- 9_model_0            1024         16       0.01       20         0.4             0.4                      0.4
- 9_model_1            1024        128       0.01       10         0.8             1.0                      0.6
-11_model_5            1024         16       0.01       10         1.0             1.0                      0.8
-10_model_7            1024         64       0.02        5         0.4             0.4                      0.6
- 6_model_3            1024         32       0.02       10         0.8             1.0                      1.0
- 2_model_3            1024         16       0.02       15         0.6             1.0                      0.4
- 2_model_5            1024        128       0.02       15         0.6             1.0                      0.6
-14_model_0            1024        128       0.02       10         0.6             1.0                      0.4
-13_model_0            1024        128       0.01       15         0.6             0.6                      0.4
- 4_model_8            1024        256       0.02       20         1.0             0.4                      0.6
- 7_model_3            1024        128       0.01       15         1.0             0.6                      0.8
-10_model_5            1024         32       0.02       15         0.4             0.8                      0.6
- 9_model_4            1024         64       0.01       20         0.8             0.8                      0.4
- 2_model_1            1024         16       0.02        5         1.0             0.8                      0.8
- 9_model_5            1024        256       0.01       20         1.0             0.6                      0.6
- 4_model_4            1024         32       0.02        5         0.8             0.6                      0.4
- 9_model_2            1024         64       0.01        5         0.6             0.6                      0.6
- 8_model_6            1024         64       0.02        5         0.4             1.0                      0.8
- 3_model_3            1024         16       0.01       15         0.4             0.4                      0.8
-min_split_improvement  histogram_type  mean_depth validation_rmse train_rmse
-                1e-08 QuantilesGlobal    11.00000       0.1516343  0.1563150
-                1e-04 QuantilesGlobal    12.41071       0.1516610  0.1534670
-                1e-06 QuantilesGlobal    10.00000       0.1517007  0.1554136
-                1e-08 QuantilesGlobal    14.00000       0.1517044  0.1571480
-                1e-08 QuantilesGlobal     8.00000       0.1517241  0.1566878
-                1e-08 UniformAdaptive    10.00000       0.1517606  0.1578543
-                1e-04      RoundRobin    12.85057       0.1517667  0.1554486
-                1e-06 QuantilesGlobal    10.00000       0.1517683  0.1582653
-                1e-06 QuantilesGlobal    11.00000       0.1517714  0.1551242
-                1e-06      RoundRobin     9.00000       0.1517815  0.1576086
-                1e-06      RoundRobin    11.00000       0.1517832  0.1573830
-                1e-06      RoundRobin    12.00000       0.1517834  0.1565651
-                1e-08 QuantilesGlobal    11.00000       0.1517872  0.1549169
-                1e-08      RoundRobin     9.00000       0.1518475  0.1590472
-                1e-04      RoundRobin    12.72868       0.1518519  0.1541744
-                1e-04 UniformAdaptive    14.00000       0.1518530  0.1542586
-                1e-04      RoundRobin     8.00000       0.1518616  0.1587867
-                1e-08      RoundRobin    12.00000       0.1518629  0.1536473
-                1e-04 QuantilesGlobal    10.00000       0.1518635  0.1569732
-                1e-08 QuantilesGlobal    10.00000       0.1518654  0.1574204
-                1e-06      RoundRobin    14.00000       0.1518671  0.1532246
-                1e-06 QuantilesGlobal    12.00000       0.1518779  0.1581619
-                1e-08 QuantilesGlobal    12.00000       0.1518874  0.1519555
+nbins nbins_top_level nbins_cats learn_rate ntrees min_rows sample_rate col_sample_rate col_sample_rate_change_per_level col_sample_rate_per_tree min_split_improvement  histogram_type
+  128            1024         64       0.02   1000       20         1.0             0.6                              1.0                      0.6                 1e-06      RoundRobin
+   64            1024         64       0.02   1000       20         0.8             0.8                              1.0                      0.6                 1e-06      RoundRobin
+ 1024            1024         64       0.02   1000       20         0.6             0.8                              0.9                      0.4                 1e-06 QuantilesGlobal
+   64            1024         64       0.01   1000       10         0.6             0.4                              1.1                      0.6                 1e-08      RoundRobin
+   32            1024         16       0.01   1000       20         0.6             0.6                              1.0                      1.0                 1e-04      RoundRobin
+  128            1024        128       0.02   1000       20         1.0             0.6                              0.9                      0.8                 1e-04      RoundRobin
+  512            1024         32       0.02   1000       15         0.8             0.8                              1.1                      0.6                 1e-06 QuantilesGlobal
+   32            1024         32       0.02   1000       20         0.8             0.6                              1.0                      0.8                 1e-04 QuantilesGlobal
+   16            1024         32       0.02   1000       20         0.6             1.0                              1.0                      0.8                 1e-06      RoundRobin
+   64            1024         32       0.02   1000       10         0.8             0.8                              1.1                      0.4                 1e-08 QuantilesGlobal
+   64            1024         64       0.01   1000       20         0.8             0.4                              1.0                      1.0                 1e-06      RoundRobin
+   64            1024         32       0.01   1000       20         0.8             0.4                              1.0                      0.8                 1e-04 UniformAdaptive
+  256            1024         32       0.02   1000       20         1.0             0.4                              1.1                      0.6                 1e-06 QuantilesGlobal
+   16            1024         64       0.01   1000       20         0.6             1.0                              1.0                      0.8                 1e-04 QuantilesGlobal
+  512            1024        128       0.01   1000       15         0.6             0.4                              1.1                      0.8                 1e-06      RoundRobin
+  256            1024         64       0.02   1000       15         0.4             1.0                              1.1                      0.4                 1e-06 QuantilesGlobal
+  256            1024         16       0.02   1000       15         0.8             1.0                              1.0                      0.6                 1e-04 QuantilesGlobal
+   64            1024         64       0.02   1000       10         0.8             1.0                              1.0                      0.6                 1e-04 UniformAdaptive
+  256            1024         32       0.01   1000       10         0.6             0.8                              1.0                      0.8                 1e-06      RoundRobin
+  128            1024         64       0.02   1000        5         1.0             0.6                              1.1                      0.4                 1e-04 UniformAdaptive
+   number_of_trees number_of_internal_trees min_depth max_depth mean_depth min_leaves max_leaves mean_leaves validation_rmse train_rmse
+1              200                      200        12        12   12.00000         20        348   151.05000       0.1576870  0.1513393
+2              205                      205        12        12   12.00000         23        322   126.92683       0.1577111  0.1525869
+3              189                      189        14        14   14.00000         58        531   216.59259       0.1577426  0.1531752
+4              267                      267        14        14   14.00000         58        583   252.38202       0.1577857  0.1522151
+5              238                      238        13        13   13.00000         30        331   132.21008       0.1578537  0.1567330
+6              103                      103        14        14   14.00000         39        481   250.73787       0.1578568  0.1523961
+7              146                      146        12        12   12.00000         32        344   185.65753       0.1578600  0.1515632
+8              144                      144        10        10   10.00000         39        194    96.32639       0.1578612  0.1554228
+9               97                       97        14        14   14.00000         37        355   154.49484       0.1578645  0.1556081
+10             152                      152        11        11   11.00000         39        387   174.83553       0.1578730  0.1513839
+11             275                      275        11        11   11.00000         17        245   110.35636       0.1578783  0.1563598
+12             258                      258        13        13   13.00000         32        490   164.75581       0.1578937  0.1559698
+13             135                      135        12        12   12.00000         48        433   198.76297       0.1579010  0.1520331
+14             225                      225        12        12   12.00000         41        304   144.99556       0.1579131  0.1558366
+15             241                      241        14        14   14.00000         48        520   195.71785       0.1579200  0.1525593
+16             158                      158        10        10   10.00000         30        197    91.31013       0.1579432  0.1563515
+17             113                      113         9        12   11.97345         15        402   191.47787       0.1579473  0.1531330
+18             120                      120        11        11   11.00000         29        262   119.90833       0.1579483  0.1539735
+19             211                      211        13        13   13.00000         34        363   164.52133       0.1579587  0.1549085
+20             182                      182         9         9    9.00000         18        242    90.03297       0.1579593  0.1524554
 ```
 ##### Tuning lessons
 - nbins_cats of 16-64 range is enough. The top 20 values it leans more towards 16, 32 than 64
-- the depth of the top trees is still between 8-14 though its centered strongly around 10-12.
-- sample rate is happy being between 0.6-0.8. Although there are two values in there that are 1 and 0.4 in the top 20
+- the depth of the top trees is between 12-14.
+- sample rate is happy being between 0.6-0.8. Although there are two values in there that are 1 top 20
 - col_sample_rate for top models is between 0.4-0.8 for the most part
-- The QuantilesGlobal and RoundRobin are much better choices of histogram
-- So lets narrow the tuning grid with the following changes:
+- The QuantilesGlobal and RoundRobin domniate the top 20. We can drop Uniform Adaptive
+
+So we can narrow the tuning grid with the following changes
 
 ```{r}
 
 hp=hyper_params.gbm
 hp$col_sample_rate = seq(0.4, 0.8, 0.1)
+hp$max_depth= seq(10, 14, 1)
 hp$sample_rate = seq(0.4, 0.8, 0.1)
 hp$nbins_cats= 2^seq(4,6,1)
 hp$histogram_type= c("QuantilesGlobal", "RoundRobin")
 ```
 
-Before we do another grid search to improve our confidence in the parameters. Lets do some baseline predictions after training the top 3 models on the entire data set. and we do so by validation.
-```{r}
-sorted.summaries = summaries %>% arrange(validation_rmse)
-topk.ids = sorted.summaries %>% pull(model_id) %>% as.character
+Before we narrow our grid search to improve our confidence in the chosen parameters, lets do some baseline predictions after training the top 3 models. We will use training + validation data to Cross validate the top K models and look at:
+1. Model with the small cross-validated RMSE
+2. Deviation of RMSE from the best model over the 5 folds.
 
-retrainWrapper <- function(gbm, train.df, validation.df) {
+```{r eval=FALSE}
+
+retrainWrapper.cv <- function(gbm, train.df, validation.df) {
     return(do.call(h2o.gbm,
         ## update pasameters in place
         {
@@ -262,15 +285,168 @@ retrainWrapper <- function(gbm, train.df, validation.df) {
           p
      }))
 }
+# The local cluster for doing the parallel computation
+cls = registerCluster(max.cores.per.machine = 6)
 
-cvgbms = list()
-for (i in 1:5) {
-  gbm <- h2o.getModel(topk.ids[[i]])
-  cvgbm <- retrainWrapper(gbm, 
-                          h2o.rbind(XYTrain.h2o, XYValidation.h2o),
-                          XYTest.h2o)
-  cvgbms[[topk.ids[[i]]]] = cvgbm
-  print(cvgbm)
+topk.ids = sorted.summaries %>% pull(model_id) %>% as.character
+cvgbms = foreach::foreach (i = iter(1:20), .packages=("h2o")) %dopar% {
+    h2o.connect()
+    gbm <- h2o.getModel(topk.ids[[i]])
+    retrainWrapper.cv(
+          gbm,
+          train.df = h2o.rbind(XYTrain.h2o, XYValidation.h2o),
+          validation.df = XYTest.h2o)
 }
 ```
+How do the cross validated models score on the hold out data set?
+
+```{r}
+
+grid.scores.topk =  Reduce(rbind,
+                           Map(function(m) c(
+                                             h2o.rmse(h2o.performance(m, train=TRUE)),
+                                             h2o.rmse(h2o.performance(m, valid=TRUE))),
+                               Map(h2o.getModel,topk.ids[1:20])))
+
+colnames(grid.scores.topk) = c("training_rmse", "validation_rmse")
+
+xval.scores.topk = Reduce(rbind,
+    Map(function(i) {
+            m = cvgbms[[i]]
+            if(is.null(m)) {
+                flog.warn(paste0("CV slot for model #",i, ", id: ", topk.ids[[i]]," was null."))
+                return(rep(NA,4))
+            } else {
+                return(c(h2o.rmse(h2o.performance(m, train=TRUE)),
+                          h2o.rmse(h2o.performance(m, xval=TRUE)),
+                          as.numeric(m@model$cross_validation_metrics_summary['rmse', ]$sd),
+                          h2o.rmse(h2o.performance(m, valid=TRUE))))
+            }},
+         1:20))
+
+# Four metrics are plotted:
+ # training_cv_rmse: The training error on cross validated data,
+ # five_fold_cv_rmse": The combined rmse on holdout set of the crossvalidated data
+ # training_cv_rmse: The error on the hold out data
+colnames(xval.scores.topk) = c("training_cv_rmse", "five_fold_cv_rmse","five_fold_cv_rmse_sd", "validation_cv_rmse")
+combined.scores = cbind(grid.scores.topk, xval.scores.topk) %>% data.frame
+rownames(combined.scores) = 1:20
+print(combinded.scores)
+combined.scores %<>% na.omit %>% mutate(x=rownames(.))
+ggplot(combined.scores) +
+    geom_line(aes(x=x, y = validation_cv_rmse, color='validation_cv_rmse', group=1)) +
+    geom_line(aes(x=x, y = validation_rmse, color='validation_rmse', group=1)) +
+    geom_line(aes(x=x, y = five_fold_cv_rmse, color='five_fold_cv_rmse', group=1)) +
+    geom_errorbar(aes(x=x,
+                  ymin = five_fold_cv_rmse + five_fold_cv_rmse_sd,
+                  ymax = five_fold_cv_rmse - five_fold_cv_rmse_sd,
+                  color='five_fold_cv_rmse', group=1), alpha=0.5, size=0.5)
+
+
+```
+```{r eval=FALSE}
+
+   training_rmse validation_rmse training_cv_rmse five_fold_cv_rmse five_fold_cv_rmse_sd validation_cv_rmse  x
+1      0.1513393       0.1576870        0.1524119         0.1607100          0.004082458          0.1548001  1 #
+2      0.1525869       0.1577111        0.1540759         0.1607378          0.004063130          0.1549174  2
+3      0.1531752       0.1577426        0.1538350         0.1606054          0.003065549          0.1550714  3
+4      0.1522151       0.1577857        0.1530762         0.1607469          0.004944799          0.1549055  4
+5      0.1567330       0.1578537        0.1566316         0.1607585          0.004479134          0.1548633  5
+6      0.1523961       0.1578568        0.1520988         0.1606936          0.003088742          0.1549510  6
+7      0.1515632       0.1578600        0.1536687         0.1608164          0.004094990          0.1550807  7
+8      0.1554228       0.1578612        0.1553167         0.1605356          0.003809473          0.1546100  8 #
+9      0.1556081       0.1578645        0.1551389         0.1606787          0.003073960          0.1547380  9 #
+10     0.1513839       0.1578730        0.1527247         0.1606474          0.001978141          0.1548650 10
+11     0.1563598       0.1578783        0.1563821         0.1607004          0.008333200          0.1549582 11
+12     0.1559698       0.1578937        0.1559304         0.1607275          0.004498995          0.1548958 12
+13     0.1520331       0.1579010        0.1526533         0.1607402          0.004067462          0.1549630 13
+14     0.1563515       0.1579432        0.1562883         0.1607314          0.003836617          0.1553803 16
+15     0.1539735       0.1579483        0.1541051         0.1607052          0.001966199          0.1549484 18
+```
+
+##### Takeaways
+- The crossvalidation improves the performance on the hold out data set.
+- The cross-validation se is pretty high demonstarting the difficulty of the task
+- Model 8, 9, 1 are the top 3 models baed on CV
+
+
+Now there are a few predictions we want to make :
+      - The prediction from the the model that scored the best in CV.
+      - The predictions for these top models, but when retrained on the entire data set
+      - The average prediction of the top 3 GBM's.
+
+Lets train each of them on the full data
+```{r}
+retrainWrapper <- function(model_ids) {
+    return(foreach::foreach (i = iter(1:5),
+                                 .packages=("h2o")) %dopar% {
+        h2o.connect()
+        gbm <- h2o.getModel(topk.ids[[i]])
+        return(do.call(h2o.gbm, {
+              p = gbm@parameters
+              p$model_id = NULL          ## do not overwrite the original grid model
+              p$training_frame= h2o.rbind(XYTrain.h2o, XYValidation.h2o, XYTest.h2o) # USING FULL DATA SET FOR TRAINING
+              p$validation_frame = NULL
+              p
+        }))
+    })
+}
+```
+
+Save these models for offline work
+```{r gbms, cache=TRUE}
+    gbm.results.dir = file.path(getwd(), LOCAL.RESULTS.DIR, "cv_models")
+    dir.create(gbm.results.dir)
+    i = 1
+    for(m in cvgbms) {
+        if(!is.null(m)) {
+            fp = file.path(gbm.results.dir, topk.ids[[i]], m@model_id)
+            stopifnot(!file.exists(fp)) # These models were obtained after a lot of wrangling so this guards against overwriting them by accident
+            dir.create(file.path(gbm.results.dir, topk.ids[[i]]))
+            saveRDS(m, file=fp)
+        }
+        i = i + 1
+    }
+```
+
+Optionally save the models if you are going to work on them later
+```{r saveTunedGBMs, eval=FALSE}
+    gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "chosen_models")
+    chosen.gbms = list()
+    for(m.id_file in list.files(gbm.results.dir, recursive=TRUE)) {
+        m.id_file.path = file.path(gbm.results.dir, m.id_file)
+        print(paste0("Loading ", m.id_file.path))
+        m = h2o.loadModel(m.id_file.path)
+        chosen.gbms[[m@model_id]] = m
+    }
+```
+
+Lets look at the
+```{r}
+chosen.predictions <- foreach::foreach(
+          X=itertools::isplitRows(pr.baseline %>% head(100), chunks=4),
+          .combine=cbind,
+          #.export=c("predict.dates.numeric.codes"),
+          .packages=c("foreach")) %:%
+    foreach(model_id= iter(cvgbms[1:5]),
+             .packages=c("foreach")) %dopar% {
+        h2o.createPredictionsFromModel.parallel(model_id, X)
+
+}
+
+XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
+cv.predictions <- foreach(
+              model_id = iter(Map(function(m) m@model_id, cvgbms[c(8,9,1)])),
+              X=itertools::isplitRows(pr.baseline, chunks=10),
+             .packages=c("foreach")
+             ) %dopar% {
+
+                gbm.model = h2o.getModel(gbm.model_id)
+                return(as.data.frame(h2o.predict(gbm.model, as.h2o(X))))
+
+}
+
+
+```
+
 
