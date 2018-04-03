@@ -35,8 +35,8 @@ SEED=123456
 SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
 CLUSTER.NODE.IP='' # This would be the IP ADDESS of the h2o cluster
 CORES.PER.MACHINE=2 # For the multi machine AWS cluster
-REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_02_04_gbm"
-LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_02_04_gbm")
+REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_03_04_gbm"
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_03_04_gbm")
 if(!dir.exists(LOCAL.RESULTS.DIR)) {
     dir.create(LOCAL.RESULTS.DIR, recursive=TRUE)
 }
@@ -134,7 +134,7 @@ Now lets train a few models. We train a few models a few times to compare learni
 # train the grids
 instances = getExistingInstancesPublicDNS()
 print(instances)
-live_instances = instances[[2]]
+live_instances = instances
 # The snow cluster is used if I want to execute the grid on multiple machines. A regular cluster is used if on local.
 
 spec = clusterSpecFromInstances(live_instances)
@@ -177,7 +177,7 @@ flog.info(paste0( "parallel training ", NGrids , " grids with ", pergrid.models,
 
 As you can see training so many grids can take a long time. Instead we will use a few of them. It is better to spawn another R Console for the rest of the notebook.
 ```{r}
-models = train.grid.wrapper(hyper_params.gbm, search_criteria.gbm)
+models = train.grid.wrapper(hp, search_criteria.gbm)
 ```
 
 The grids above can take a long time to complete. But once a few 100 models have been trained we can just crack on with the analysis. Lets save the grids to disk and work offline with them.  You might want to source the code above and the constants to keep going. One issue with an h2o cluster is when interactive mode a failure on one node can cause models to dissapear.
