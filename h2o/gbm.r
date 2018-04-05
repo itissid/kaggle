@@ -1,6 +1,7 @@
 library(h2o)
 source("utils.R")
 source("datadefs.R")
+library(lubridate)
 # Strategy 1 to tune the boosting models
 # 1. Start with a short number of trees like 100  and tune the learning rate: [2-10]/trees.
 #     Observe the curve of the training metric to figure out the learning rate
@@ -206,6 +207,7 @@ modelListFromGrids = function(grid_id_prefix, N) {
 }
 
 # This is a routine you can call that parallelizes the three predictions on dates 2016/10-2016/12 for zillow data set using h2o
+
 h2o.createPredictionsFromModel.parallel = function(
 	    gbm.model_id, X, has.dates=FALSE) {
         # It assumes that the h2o cluster is available on the remote machine
@@ -287,7 +289,7 @@ h2o.gridLoader = function(grid.ids, results.dir="results") {
             gid.dir=file.path(results.dir, g.id)
         if(!dir.exists(gid.dir)) {
             flog.error(paste0(gid.dir, " does not exist. Can't load grid"))
-            stopifnot(TRUE)
+            stopifnot(FALSE)
         }
         for(m.id_file in list.files(gid.dir, recursive=TRUE)) {
 	    m.id_file.path = file.path(gid.dir, m.id_file)
@@ -306,7 +308,8 @@ model_summaries_from_loaded_models = function(models) {
     summaryForEach <- function(m) {
         perf.v = h2o.performance(m, valid=T)
         perf.t = h2o.performance(m, train=T)
-        rt = m@model$runtime
+        ts = m@model$scoring_history %>% data.frame %>% dplyr::mutate(timestamp = ymd_hms(timestamp)) %>% dplyr::pull(timestamp)
+        approx_time_duration = as.numeric(as.period(interval(ts[1], ts[length(ts)]), units="seconds"))
         params = m@allparameters %>% data.frame %>%
             dplyr::select_at(vars(display_vars)) %>%
             dplyr::distinct()
@@ -314,7 +317,7 @@ model_summaries_from_loaded_models = function(models) {
             data.frame %>%
             dplyr::mutate(validation_rmse = perf.v %>% h2o.rmse()) %>%
             dplyr::mutate(train_rmse = perf.t %>% h2o.rmse()) %>%
-            dplyr::mutate(runtime = rt %>% h2o.rmse()) %>%
+            dplyr::mutate(approx_time_duration = approx_time_duration) %>%
             select(-model_size_in_bytes)
         return(cbind(params, m.summary))
     }

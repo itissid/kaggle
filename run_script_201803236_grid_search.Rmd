@@ -33,13 +33,14 @@ source("utils/AmazonEC2.R")
 source("h2o/source-for-rmd.R")
 SEED=123456
 SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
-CLUSTER.NODE.IP='' # This would be the IP ADDESS of the h2o cluster
+CLUSTER.NODE.IP='localhost' # This would be the IP ADDESS of the h2o cluster
 CORES.PER.MACHINE=2 # For the multi machine AWS cluster
-REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_02_04_gbm"
-LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_02_04_gbm")
+REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_03_04_gbm"
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_03_04_gbm")
 if(!dir.exists(LOCAL.RESULTS.DIR)) {
     dir.create(LOCAL.RESULTS.DIR, recursive=TRUE)
 }
+DATE.FEATURE=TRUE
 ```
 
 
@@ -53,10 +54,10 @@ if(!dir.exists(LOCAL.RESULTS.DIR)) {
 
 TODO: Link a page to start the h2o cluster.
 Once you have started the cluster grab one of the IP's and stick it into the CLUSTER.NODE.IP variable
-```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide', eval=FALSE}
 h2o.connect(ip=CLUSTER.NODE.IP)
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
-list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL, t.dates] =  prepareDataWrapper.h2o.gbm.baseline(dates.to.numeric=T, keep.dates=T)
+list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL, t.dates] =  prepareDataWrapper.h2o.gbm.baseline(dates.to.numeric=T, keep.dates=DATE.FEATURE)
 
 list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"), seed=SEED)
 independent.vars = colnames(tr.baseline %>% select(-logerror))
@@ -126,7 +127,7 @@ baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
 
 Now lets train a few models. We train a few models a few times to compare learning rates
 
-```{r training, cache=TRUE}
+```{r training, cache=TRUE, eval=FALSE}
 # TODO: Register a parallel backend using snow/doParallel
 # Run the for each loop
 # Get Cluster spec from h2o cluster.
@@ -140,8 +141,6 @@ live_instances = instances[[2]]
 spec = clusterSpecFromInstances(live_instances)
 clus = registerCluster(localOnly=FALSE, port=SNOW.PORT, instances.opts=spec, CORES.PER.MACHINE)
 # foreach is quite expensive to just have iterators over all the hyper params so we have multiple grids and we iterate only over learning rate and depth
-sc=search_criteria.gbm
-hp=hyper_params.gbm
 progress <- function() cat('.')
 train.grid.wrapper = function(hp, sc) {
     foreach::foreach(
@@ -169,6 +168,8 @@ train.grid.wrapper = function(hp, sc) {
         }
 }
 
+sc=search_criteria.gbm
+hp=hyper_params.gbm
 NGrids = length(hp$max_depth)*length(hp$learn_rate)
 pergrid.models = Reduce('*', Map(function(x, init) length(x), hp) )/NGrids
 flog.info(paste0( "parallel training ", NGrids , " grids with ", pergrid.models, " models each."))
@@ -176,7 +177,7 @@ flog.info(paste0( "parallel training ", NGrids , " grids with ", pergrid.models,
 ```
 
 As you can see training so many grids can take a long time. Instead we will use a few of them. It is better to spawn another R Console for the rest of the notebook.
-```{r}
+```{r, eval=FALSE}
 models = train.grid.wrapper(hyper_params.gbm, search_criteria.gbm)
 ```
 
@@ -197,7 +198,7 @@ system(rsync.command)
 
 Instead of loading models from h2o we load them from disk.
 ```{r}
-models = h2o.gridLoader(1:14, results.dir=LOCAL.RESULTS.DIR)
+models = h2o.gridLoader(1:NGrids, results.dir=LOCAL.RESULTS.DIR)
 all_summaries = model_summaries_from_loaded_models(models) %>% arrange(validation_rmse)
 sorted.summaries = all_summaries %>% arrange(validation_rmse)
 ```
@@ -265,6 +266,9 @@ hp$max_depth= seq(10, 14, 1)
 hp$sample_rate = seq(0.4, 0.8, 0.1)
 hp$nbins_cats= 2^seq(4,6,1)
 hp$histogram_type= c("QuantilesGlobal", "RoundRobin")
+NGrids = length(hp$max_depth)*length(hp$learn_rate)
+pergrid.models = Reduce('*', Map(function(x, init) length(x), hp) )/NGrids
+flog.info(paste0( "After narrowing grid search, parallel training with ", NGrids , " grids with ", pergrid.models, " models each."))
 ```
 
 Before we narrow our grid search to improve our confidence in the chosen parameters, lets do some baseline predictions after training the top 3 models. We will use training + validation data to Cross validate the top K models and look at:
@@ -289,30 +293,89 @@ retrainWrapper.cv <- function(gbm, train.df, validation.df) {
 cls = registerCluster(max.cores.per.machine = 6)
 
 topk.ids = sorted.summaries %>% pull(model_id) %>% as.character
-cvgbms = foreach::foreach (i = iter(1:20), .packages=("h2o")) %dopar% {
+# Create a list of crossvalidated GBM model, indexed by the topk model id's. 20 top models are selected
+cvgbms = foreach::foreach (
+       i = iter(1:20), .packages=("h2o"),
+       .final = function(x) setNames(x, topk.ids[1:20])) %dopar% {
     h2o.connect()
     gbm <- h2o.getModel(topk.ids[[i]])
-    retrainWrapper.cv(
+    cvmodel = retrainWrapper.cv(
           gbm,
           train.df = h2o.rbind(XYTrain.h2o, XYValidation.h2o),
           validation.df = XYTest.h2o)
+    # We note the modelid of the GBM's so as to associate them with the odel from whcih they were created
+    cvmodel@model$origin.model = topk.ids[[i]]
+    return(cvmodel)
 }
 ```
-How do the cross validated models score on the hold out data set?
 
-```{r}
+Save these models for offline work.
+```{r gbms, cache=TRUE}
+    gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "cv_models")
+    dir.create(gbm.results.dir)
+    i = 1
+    for(m in cvgbms) {
+        if(!is.null(m)) {
+            fp = file.path(gbm.results.dir, m@model$origin.model)
+            # These models were obtained after a some effort, so this guards against overwriting/polluting them by accident
+            #stopifnot(
+            #      !file.exists(file.path(
+            #                     gbm.results.dir, topk.ids[[i]]))) 
+            dir.create(fp)
+            #h2o.saveModel(m, path=fp) # Don't try and save with saveRDS, it does not work
+            h2o.download_pojo(m, path=fp) # Don't try and save with saveRDS, it does not work
+            cat(".")
+        }
+        i = i + 1
+    }
+
+```
+
+Optionally load the models if you are resuming work.
+```{r saveTunedGBMs, eval=FALSE}
+# Since the models are loaded from disk. the order they are in is not the same as the topk.ids. So we need to take care of that here
+gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "cv_models")
+if(!dir.exists(gbm.results.dir)) {
+    flog.warn(paste0("Dir ", gbm.results.dir, " does not exist"))
+    stopifnot(FALSE)
+}
+
+cvgbms = list()
+for(m.id_file in list.files(gbm.results.dir, recursive=TRUE)) {
+
+    m.id_file.path = file.path(gbm.results.dir, m.id_file)
+    if(endsWith(m.id_file.path, ".java") || endsWith(m.id_file.path, ".jar")) { # Saved POJOs
+        flog.info(paste("Not loading ", m.id_file.path))
+        next    
+    }
+    print(".")
+    # Find the slot of the loaded model in the current files
+    flog.debug(paste0("Loading ", m.id_file.path))
+    m = h2o.loadModel(m.id_file.path)
+    cvgbms[[m@model$origin.model]] = m
+    print('..')
+}
+```
+
+So how do the cross validated models score on the hold out data set?
+
+```{r, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE, eval=FALSE}
 
 grid.scores.topk =  Reduce(rbind,
                            Map(function(m) c(
                                              h2o.rmse(h2o.performance(m, train=TRUE)),
-                                             h2o.rmse(h2o.performance(m, valid=TRUE))),
+                                             h2o.rmse(h2o.performance(m, valid=TRUE)),
+                                             m@model_id),
                                Map(h2o.getModel,topk.ids[1:20])))
 
-colnames(grid.scores.topk) = c("training_rmse", "validation_rmse")
+colnames(grid.scores.topk) = c("training_rmse", "validation_rmse", "model_id")
+
+grid.scores.topk %<>% as.data.frame(stringsAsFactors=FALSE) %>% 
+    dplyr::mutate(training_rmse = as.numeric(training_rmse), validation_rmse=as.numeric(validation_rmse)
 
 xval.scores.topk = Reduce(rbind,
     Map(function(i) {
-            m = cvgbms[[i]]
+            m = cvgbms[[topk.ids[i]]]
             if(is.null(m)) {
                 flog.warn(paste0("CV slot for model #",i, ", id: ", topk.ids[[i]]," was null."))
                 return(rep(NA,4))
@@ -320,18 +383,24 @@ xval.scores.topk = Reduce(rbind,
                 return(c(h2o.rmse(h2o.performance(m, train=TRUE)),
                           h2o.rmse(h2o.performance(m, xval=TRUE)),
                           as.numeric(m@model$cross_validation_metrics_summary['rmse', ]$sd),
-                          h2o.rmse(h2o.performance(m, valid=TRUE))))
+                          h2o.rmse(h2o.performance(m, valid=TRUE)),
+                          topk.ids[[i]]))
             }},
          1:20))
 
-# Four metrics are plotted:
+# Following metrics are plotted:
+ # training_rmse: The model's error on the training data set
+ # validation_rmse: The model's error on the validation data set
  # training_cv_rmse: The training error on cross validated data,
  # five_fold_cv_rmse": The combined rmse on holdout set of the crossvalidated data
- # training_cv_rmse: The error on the hold out data
-colnames(xval.scores.topk) = c("training_cv_rmse", "five_fold_cv_rmse","five_fold_cv_rmse_sd", "validation_cv_rmse")
+ # five_fold_cv_rmse_sd": the sd of the K fold CV RMSEs
+ # validation_cv_rmse: The error of the cross validated model on the hold out data
+colnames(xval.scores.topk) = c("training_cv_rmse", "five_fold_cv_rmse",
+                               "five_fold_cv_rmse_sd", "validation_cv_rmse",
+                               "model_id")
 combined.scores = cbind(grid.scores.topk, xval.scores.topk) %>% data.frame
 rownames(combined.scores) = 1:20
-print(combinded.scores)
+print(combined.scores)
 combined.scores %<>% na.omit %>% mutate(x=rownames(.))
 ggplot(combined.scores) +
     geom_line(aes(x=x, y = validation_cv_rmse, color='validation_cv_rmse', group=1)) +
@@ -344,107 +413,99 @@ ggplot(combined.scores) +
 
 
 ```
-```{r eval=FALSE}
+And here are the end results
 
-   training_rmse validation_rmse training_cv_rmse five_fold_cv_rmse five_fold_cv_rmse_sd validation_cv_rmse  x
-1      0.1513393       0.1576870        0.1524119         0.1607100          0.004082458          0.1548001  1 #
-2      0.1525869       0.1577111        0.1540759         0.1607378          0.004063130          0.1549174  2
-3      0.1531752       0.1577426        0.1538350         0.1606054          0.003065549          0.1550714  3
-4      0.1522151       0.1577857        0.1530762         0.1607469          0.004944799          0.1549055  4
-5      0.1567330       0.1578537        0.1566316         0.1607585          0.004479134          0.1548633  5
-6      0.1523961       0.1578568        0.1520988         0.1606936          0.003088742          0.1549510  6
-7      0.1515632       0.1578600        0.1536687         0.1608164          0.004094990          0.1550807  7
-8      0.1554228       0.1578612        0.1553167         0.1605356          0.003809473          0.1546100  8 #
-9      0.1556081       0.1578645        0.1551389         0.1606787          0.003073960          0.1547380  9 #
-10     0.1513839       0.1578730        0.1527247         0.1606474          0.001978141          0.1548650 10
-11     0.1563598       0.1578783        0.1563821         0.1607004          0.008333200          0.1549582 11
-12     0.1559698       0.1578937        0.1559304         0.1607275          0.004498995          0.1548958 12
-13     0.1520331       0.1579010        0.1526533         0.1607402          0.004067462          0.1549630 13
-14     0.1563515       0.1579432        0.1562883         0.1607314          0.003836617          0.1553803 16
-15     0.1539735       0.1579483        0.1541051         0.1607052          0.001966199          0.1549484 18
+```{r eval=FALSE}
+> combined.scores %>% dplyr::arrange(validation_rmse) %>% head(5)
+  training_rmse validation_rmse training_cv_rmse five_fold_cv_rmse five_fold_cv_rmse_sd validation_cv_rmse x
+1     0.1524634       0.1575912        0.1546496         0.1607562          0.003245448          0.1550688 1
+2     0.1536710       0.1576838        0.1541283         0.1605204          0.002876918          0.1547557 2
+3     0.1510411       0.1576987        0.1531384         0.1606293          0.003212974          0.1547801 3
+4     0.1541381       0.1577222        0.1543080         0.1605372          0.004817895          0.1547763 4
+5     0.1542500       0.1577269        0.1553290         0.1605997          0.002967700          0.1549573 5
+> combined.scores %>% dplyr::arrange(validation_cv_rmse) %>% head(5)
+  training_rmse validation_rmse training_cv_rmse five_fold_cv_rmse five_fold_cv_rmse_sd validation_cv_rmse  x
+1     0.1516028       0.1577624        0.1523159         0.1607009          0.003225586          0.1547194 11
+2     0.1547744       0.1577506        0.1537014         0.1607162          0.003218554          0.1547330  8
+3     0.1538070       0.1577549        0.1548555         0.1605744          0.005776218          0.1547443  9
+4     0.1525488       0.1578152        0.1526349         0.1606426          0.002971843          0.1547493 19
+5     0.1536710       0.1576838        0.1541283         0.1605204          0.002876918          0.1547557  2
+> combined.scores %>% dplyr::arrange(five_fold_cv_rmse_sd) %>% head(5)
+  training_rmse validation_rmse training_cv_rmse five_fold_cv_rmse five_fold_cv_rmse_sd validation_cv_rmse  x
+1     0.1536710       0.1576838        0.1541283         0.1605204          0.002876918          0.1547557  2
+2     0.1557194       0.1577673        0.1566060         0.1607139          0.002946662          0.1549478 12
+3     0.1542500       0.1577269        0.1553290         0.1605997          0.002967700          0.1549573  5
+4     0.1525488       0.1578152        0.1526349         0.1606426          0.002971843          0.1547493 19
+5     0.1551364       0.1577394        0.1541773         0.1605682          0.003007525          0.1549236  6
 ```
 
 ##### Takeaways
-- The crossvalidation improves the performance on the hold out data set.
-- The cross-validation se is pretty high demonstarting the difficulty of the task
-- Model 8, 9, 1 are the top 3 models baed on CV
+- The crossvalidation improves the performance on the hold out data set(compare validation_rmse and validation_cv_rmse)
+- The cross-validation rmse are pretty high(ish). Its possible that because of the task of modelling the log error the task the amount of noise in the data set is high. Regardless of the cause of the high variance, [this](https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/cross-validation.rst) link indicates that becasue of it, its hard to fully "trust" the top models.
+- Off The top models which did well(see validation_rmse) on holdout data set, only model 2 appeared in the top 5.
+
+So along with the model that did the best in cross validation, I made the following additional submissions:
+    - Model 12.
+    - Model 12 but after retraining on the full data set.
+    - Ensemble of top 5 CV models.
+    - Ensemble of top 5 CV models but after retraining on the entire data set.
 
 
-Now there are a few predictions we want to make :
-      - The prediction from the the model that scored the best in CV.
-      - The predictions for these top models, but when retrained on the entire data set
-      - The average prediction of the top 3 GBM's.
+Lets look at the predictions for the top models
+```{r, eval=FALSE}
 
-Lets train each of them on the full data
-```{r}
-retrainWrapper <- function(model_ids) {
-    return(foreach::foreach (i = iter(1:5),
-                                 .packages=("h2o")) %dopar% {
-        h2o.connect()
-        gbm <- h2o.getModel(topk.ids[[i]])
-        return(do.call(h2o.gbm, {
-              p = gbm@parameters
-              p$model_id = NULL          ## do not overwrite the original grid model
-              p$training_frame= h2o.rbind(XYTrain.h2o, XYValidation.h2o, XYTest.h2o) # USING FULL DATA SET FOR TRAINING
-              p$validation_frame = NULL
-              p
-        }))
-    })
-}
-```
+models.idxs = c(8,9,1) # The indexes of the top models 
+# The dates needed for the levels
+predict.dates = c("2016-10-01", "2016-11-01", "2016-12-01")
+predict.dates.numeric.codes = which(levels(t.dates) %in% predict.dates)
+parcel_ids = as.integer(pr.baseline$id_parcel)
 
-Save these models for offline work
-```{r gbms, cache=TRUE}
-    gbm.results.dir = file.path(getwd(), LOCAL.RESULTS.DIR, "cv_models")
-    dir.create(gbm.results.dir)
-    i = 1
-    for(m in cvgbms) {
-        if(!is.null(m)) {
-            fp = file.path(gbm.results.dir, topk.ids[[i]], m@model_id)
-            stopifnot(!file.exists(fp)) # These models were obtained after a lot of wrangling so this guards against overwriting them by accident
-            dir.create(file.path(gbm.results.dir, topk.ids[[i]]))
-            saveRDS(m, file=fp)
-        }
-        i = i + 1
-    }
-```
-
-Optionally save the models if you are going to work on them later
-```{r saveTunedGBMs, eval=FALSE}
-    gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "chosen_models")
-    chosen.gbms = list()
-    for(m.id_file in list.files(gbm.results.dir, recursive=TRUE)) {
-        m.id_file.path = file.path(gbm.results.dir, m.id_file)
-        print(paste0("Loading ", m.id_file.path))
-        m = h2o.loadModel(m.id_file.path)
-        chosen.gbms[[m@model_id]] = m
-    }
-```
-
-Lets look at the
-```{r}
-chosen.predictions <- foreach::foreach(
-          X=itertools::isplitRows(pr.baseline %>% head(100), chunks=4),
-          .combine=cbind,
-          #.export=c("predict.dates.numeric.codes"),
-          .packages=c("foreach")) %:%
-    foreach(model_id= iter(cvgbms[1:5]),
-             .packages=c("foreach")) %dopar% {
-        h2o.createPredictionsFromModel.parallel(model_id, X)
-
-}
-
-XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
 cv.predictions <- foreach(
-              model_id = iter(Map(function(m) m@model_id, cvgbms[c(8,9,1)])),
-              X=itertools::isplitRows(pr.baseline, chunks=10),
-             .packages=c("foreach")
-             ) %dopar% {
+            nx = itertools::product(
+                 #model_id = iter(Map(function(m) m@model_id, cvgbms[models.idxs])),
+                 i = iter(1:length(models.idxs))
+                 #X=itertools::isplitRows(pr.baseline, chunks=10)
+            ),
+            .packages=c("magrittr", "h2o", "dplyr")) %do% {
+                cat(paste0("Prediction for Model: ", cvgbm[[models.idxs[nx$i]]]@model_id, "\n"), stdout())
+                #h2o.connect() 
+                #gbm.model = h2o.getModel(nx$model_id)
+                print("..")
+                if(DATE.FEATURE) {
+                    Map(function(date.code) {
+                        X = as.h2o(pr.baseline %>% dplyr::mutate(date=date.code), destination_frame="XPredict")
+                        #ds = h2o.predict(gbm.model, X) %>% as.data.frame
+                        ds = h2o.predict(h2o.get(cvgbm[[models.idxs[i]]], X) %>% as.data.frame
+                        h2o.rm("XPredict")
+                        print(".")
+                        ds = cbind(data.frame(parcelid=parcel_ids), ds, ds)
+                        print(paste(dim(ds)))
+                        colnames(ds) = c("parcelid", "201610", "201611" ,"201612", "201710", "201711", "201712")
+                        print("..")
+                    }, predict.dates.numeric.codes)
+                } else {
+                    predictions = h2o.predict(h2o.get(cvgbm[[models.idx]], X), 
+                                              as.h2o(pr.baseline, destination_frame="XPredict")) %>% 
+                    as.data.frame
 
-                gbm.model = h2o.getModel(gbm.model_id)
-                return(as.data.frame(h2o.predict(gbm.model, as.h2o(X))))
-
+                    ds = data.frame(parcelid=parcel_ids, 
+                                    "201610"=predictions, 
+                                    "201611"=predictions, 
+                                    "201612"=predictions,
+                                    "201710"=predictions,
+                                    "201711"=predictions,
+                                    "201712"=predictions) 
+                    colnames(ds) = c("parcelid", "201610", "201611" ,"201612", "201710", "201711", "201712")
+                }
+                writePredictions(predictions = ds,
+                                 filename.suffix=paste0( 
+                                        "cross_validated_", models.idxs[i], "_",
+                                        cvgbms[[topk.ids[[models.idxs[i]]]]]@model_id))
+                rm(ds)
+                cat(paste0("Size: ", nrow(date.predictions), "\n"))
+                date.predictions
 }
+
 
 
 ```
