@@ -38,7 +38,7 @@ h2o.init()
 
 Tuning the learning rate. First lets prepare some data
 
-```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 
@@ -48,11 +48,9 @@ list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, spl
 
 XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
 XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
-
-XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
 ```
 
-Now lets create a grid that only varies the learning rate only. We choose a large number of trees. But becasue we have early stopping we should be ok.
+<p>There are two data sets one used in the training and the other held out as a validation set. I created a grid with defaults, especially a large number of trees. But becasue we have early stopping we should be ok.</p>
 
 ```{r hyperparams_search_crit}
 hyper_params_search_crit.learnrate.tune = function(
@@ -101,12 +99,12 @@ baseline.fit = function(hp, sc, grid_id = "learning_rate_search", seed=123456) {
 
 Now lets train a few models. We train a few models a few times to compare learning rates
 
-```{r training, cache=TRUE}
-set.seed(123456)
+```{r training, cache=TRUE, results='hide'}
 NGrids = 15
 target_learning_rates = seq(0.01, 0.05, 0.01)
 list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate] =
     hyper_params_search_crit.learnrate.tune(learn_rate_opts=target_learning_rates)
+# Randomize and search for the best learning rate.
 fits = sapply(X = 1:NGrids,
               FUN=function(x) baseline.fit(
                        hp=hyper_params.gbm.learnrate,
@@ -129,7 +127,7 @@ print(dim(models.lst))
 
 First extract the score histories of each of the models into a data frame
 and stuff them into a list.
-```{r}
+```{r, results="hide"}
 
 getRMSEScoreHistory = function (models) {
     # Given a list of model ids get a data frame with its RMSE score history
@@ -185,18 +183,9 @@ Plot em!
 ```{r plots, fig.width=10, fig.height=10}
 
 # I initially tried working with a lits of plots instead of plotting the data directly. Had trouble sizing the plots properly. So backed off and instead used a combined version of score history with vanialla ggplot.
-min_y_lim = min(sapply(1:NGrids,
-                       function(g) {
-                           score.history.lst[, g] %>%
-                               data.frame %>%
-                               pull(rmse) %>% min
-                       }))
-max_y_lim = max(sapply(1:NGrids,
-                       function(g) {
-                           score.history.lst[, g] %>%
-                               data.frame %>%
-                               pull(rmse) %>% max
-                       }))
+min_y_lim = score.history.combined %>% pull(rmse) %>% min
+max_y_lim = score.history.combined %>% pull(rmse) %>% max
+
 ggplot(score.history.combined) +
     facet_wrap(~ grid_id, ncol=2) +
         geom_line(aes(y=rmse, x=ntrees, color=as.factor(lr)),

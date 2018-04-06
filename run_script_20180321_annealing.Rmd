@@ -46,86 +46,16 @@ list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, spl
 
 XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
 XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
-
-XPredict = as.h2o(pr.baseline, destination_frame="XPredict")
 ```
 
-Here are the functions that are common to the last Vignette on learning rate tuning, stated again for context.
-```{r commonfunctions}
-
-baseline.fit = function(hp, sc, grid_id = "learning_rate_search_annealed", seed=123456) {
-        h2o.grid.helper(
-                        XYTrain.h2o, 
-                        XYTest.h2o, 
-                        independentCols=independent.vars,
-                        hyper_params = hp,
-                        search_criteria = sc,
-                        algorithm="gbm", 
-                        grid_id=grid_id,
-                        seed = seed
-                        )
-}
-
-hyper_params_search_crit.learnrate.tune = function(
-            ntrees_opts = 10000, # early stopping will stop the earlier.
-            max_depth_opts = 10,  # Start with 6 for now
-            min_rows_opts = 5,   # How many leaf nodes to average over, doing the log of # rows would be ok
-            learn_rate_opts = 0.01,
-            learn_rate_annealing = 1,
-            sample_rate_opts = 0.9,
-            col_sample_rate_opts = 0.9,
-            col_sample_rate_per_tree_opts = 0.9, 
-            strategy="RandomDiscrete") {
-
-    list[search_criteria, hyper_params] =  hyper_params_search_crit(
-            ntrees_opts = ntrees_opts,
-            max_depth_opts = max_depth_opts,
-            min_rows_opts = min_rows_opts,
-            learn_rate_opts = learn_rate_opts, # from the previous
-            learn_rate_annealing = learn_rate_annealing,
-            sample_rate_opts = sample_rate_opts,
-            col_sample_rate_opts = col_sample_rate_opts,
-            col_sample_rate_per_tree_opts = col_sample_rate_per_tree_opts,
-            strategy=strategy) 
-    return(list(search_criteria, hyper_params))
-}
-
-getRMSEScoreHistory = function (models) {
-    # Given a list of model ids get a data frame with its RMSE score history
-    df.grid = data.frame()
-    score.history = data.frame()
-    # Learning rate of 0.03 seems to be ok.
-    for (i in 1:length(models)) {
-        model.rmse = h2o.rmse(h2o.performance(models[[i]]))
-        lr = models[[i]]@parameters$learn_rate
-        df.grid = rbind(df.grid, c(lr, model.rmse))
-        model.rmse.rate = h2o.scoreHistory(models[[i]]) %>% 
-            data.frame %>% 
-            pull(validation_rmse)
-        score.history = rbind(score.history,
-                              data.frame(
-                                         ntrees = 1:length(model.rmse.rate), 
-                                         rmse = model.rmse.rate, 
-                                         id = i,
-                                         lr = lr,
-                                         id = paste("model_", i, "_lr_", lr, sep='')
-                                         )
-                              )
-    }
-    score.history
-}
-
-```
-
-Now lets see if annealing makes any difference?
-
-```{r training.annealed, cache=TRUE}
+Change the hyper parameters to contain the annealing parameter.
+```{r training.annealed, cache=TRUE, results="hide"}
 set.seed(123456) 
 target_learning_rates = seq(0.01, 0.05, 0.01)
 # Just change the annealing rate for the hyper parameters
 list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate] = hyper_params_search_crit.learnrate.tune(
-                                                                                                          learn_rate_opts=target_learning_rates, 
-                                                                                                          learn_rate_annealing=0.995)
+                                                                      learn_rate_opts=target_learning_rates, 
+                                                                      learn_rate_annealing=0.995)
 # The search parameters and hyper params to the GBM are
 print(search_criteria.gbm.learnrate %>% data.frame)
 print(hyper_params.gbm.learnrate %>% data.frame)
@@ -162,10 +92,8 @@ models.lst = sapply(X=1:NGrids,
                     })
 ```
 
-Again lets get the score histories
+Combine all the histories into one frame.
 ```{r plots.annealed, results='markup'}
-#assertthat::assert_that(nrow(models.lst) == length(target_learning_rates))
-#assertthat::assert_that(ncol(models.lst) == NGrids)
 # For each model list in models.lst extract the histories
 score.history.lst = sapply(X = 1:NGrids, 
                            function(x) getRMSEScoreHistory(models.lst[, x])) 
@@ -183,18 +111,8 @@ score.history.combined =
 
 Plot em!
 ```{r plots, fig.width=10, fig.height=10}
-min_y_lim = min(sapply(1:NGrids,
-                       function(g) {
-                           score.history.lst[, g] %>%
-                               data.frame %>%
-                               pull(rmse) %>% min
-                       }))
-max_y_lim = max(sapply(1:NGrids,
-                       function(g) {
-                           score.history.lst[, g] %>%
-                               data.frame %>%
-                               pull(rmse) %>% max
-                       }))
+min_y_lim = score.history.combined %>% pull(rmse) %>% min
+max_y_lim = score.history.combined %>% pull(rmse) %>% max
 
 ggplot(score.history.combined) +
     facet_wrap(~ grid_id, ncol=2) +
@@ -207,7 +125,7 @@ ggplot(score.history.combined) +
           strip.text.x = element_blank()
         )
 ```
-Annealing results in more consistent RMSE scores at the end as well as overall
+Annealing results in more consistent RMSE scores in the 0.1-0.2 range
 
 ```{r}
 score.history.combined %>% group_by(grid_id, lr) %>% 
@@ -225,5 +143,5 @@ score.history.combined %>%
     arrange(rmse)
 ```
 
-The RMSE due to annealing is higher than without(see previous notebook).
-Annealing reveals that the learning rates between 0.1-0.2 (ultimately to be choosen by grid search) are the right choice, even if we *don't* end up using annealing in the final fit.
+The RMSE due to annealing is higher than without(see previous notebook) which is to be expected.
+But annealing reveals that the learning rates between 0.1-0.2 (ultimately to be choosen by grid search) are the right choice, even if we *don't* end up using annealing in the final fit.
