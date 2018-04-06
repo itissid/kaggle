@@ -302,12 +302,13 @@ h2o.gridLoader = function(grid.ids, results.dir="results") {
 }
 
 # For the models loaded by h2o.gridLoader recover the actual model summaries.
-model_summaries_from_loaded_models = function(models) {
-  display_vars = c(
+model_summaries_from_loaded_models = function(models, display_vars = c(
        "model_id", "nbins", "nbins_top_level", "nbins_cats", "learn_rate", "ntrees", "min_rows", "nbins",  "sample_rate", "col_sample_rate", "col_sample_rate_change_per_level", "col_sample_rate_per_tree", "min_split_improvement", "histogram_type")
+) {
     summaryForEach <- function(m) {
         perf.v = h2o.performance(m, valid=T)
         perf.t = h2o.performance(m, train=T)
+        perf.x = h2o.performance(m, xval=T)
         ts = m@model$scoring_history %>% data.frame %>% dplyr::mutate(timestamp = ymd_hms(timestamp)) %>% dplyr::pull(timestamp)
         approx_time_duration = as.numeric(as.period(interval(ts[1], ts[length(ts)]), units="seconds"))
         params = m@allparameters %>% data.frame %>%
@@ -316,6 +317,7 @@ model_summaries_from_loaded_models = function(models) {
         m.summary = m@model$model_summary %>%
             data.frame %>%
             dplyr::mutate(validation_rmse = perf.v %>% h2o.rmse()) %>%
+            dplyr::mutate(cv_rmse = if_else(!is.null(perf.x), perf.x  %>% h2o.rmse(), NA_real_)) %>%
             dplyr::mutate(train_rmse = perf.t %>% h2o.rmse()) %>%
             dplyr::mutate(approx_time_duration = approx_time_duration) %>%
             select(-model_size_in_bytes)
