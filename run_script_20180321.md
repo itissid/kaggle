@@ -129,7 +129,15 @@ models.lst = sapply(X = 1:NGrids,
                         grid.id = h2o.getGrid(paste("learning_rate_search_", x, sep=''))
                         sapply(X=grid.id@model_ids, FUN=h2o.getModel)
                     })
-print(dim(models.lst))
+```
+
+
+```r
+print(paste(dim(models.lst)))
+```
+
+```
+## [1] "5"  "10"
 ```
 
 First extract the score histories of each of the models into a data frame
@@ -174,6 +182,8 @@ score.history.combined =
                     mutate(grid_id=i)
             }, 1:NGrids)
     )
+
+head(score.history.combined)
 ```
 
 So how do the learning curves look for each grid? Lets plot them.

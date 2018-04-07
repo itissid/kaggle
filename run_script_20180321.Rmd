@@ -8,6 +8,7 @@ output:
     highlight: default
     citation_package:
     keep_tex: false
+    keep_md: true
     fig_caption: true
     latex_engine: pdflatex
 runtime: shiny
@@ -36,7 +37,9 @@ source("h2o/source-for-rmd.R")
 h2o.init()
 ```
 
-Tuning the learning rate. First lets prepare some data
+In this vignette I will try and get a feel for the learning rate by training many GBM models on just the learning rate. Once these models are trained I will look at the scoring history and what learning rate does well.
+
+First lets use the wrapper routines and prepare some data.
 
 ```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
@@ -46,9 +49,13 @@ independent.vars = colnames(tr.baseline %>% select(-logerror))
 
 list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror")
 
+```
+
+```{r, results="hide"}
 XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
 XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
 ```
+
 
 <p>There are two data sets one used in the training and the other held out as a validation set. I created a grid with defaults, especially a large number of trees. But becasue we have early stopping we should be ok.</p>
 
@@ -85,8 +92,8 @@ Here is the wrapper written to do the model fit.
 
 baseline.fit = function(hp, sc, grid_id = "learning_rate_search", seed=123456) {
         h2o.grid.helper(
-                        XYTrain.h2o,
-                        XYTest.h2o,
+                        h2o.getFrame("XTrain.h2o"),
+                        h2o.getFrame("XTest.h2o"),
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
@@ -99,30 +106,51 @@ baseline.fit = function(hp, sc, grid_id = "learning_rate_search", seed=123456) {
 
 Now lets train a few models. We train a few models a few times to compare learning rates
 
-```{r training, cache=TRUE, results='hide'}
-NGrids = 15
+```{r training, cache=TRUE, results="hide", eval=FALSE}
+NGrids = 10
 target_learning_rates = seq(0.01, 0.05, 0.01)
 list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate] =
     hyper_params_search_crit.learnrate.tune(learn_rate_opts=target_learning_rates)
 # Randomize and search for the best learning rate.
-fits = sapply(X = 1:NGrids,
-              FUN=function(x) baseline.fit(
+cls = registerCluster(max.cores.per.machine = 6)
+fits = foreach(x = 1:NGrids, .packages= c("h2o")) %dopar% {
+              h2o.connect()
+              baseline.fit(
                        hp=hyper_params.gbm.learnrate,
                        sc=search_criteria.gbm.learnrate,
                        grid_id = paste("learning_rate_search_", x, sep=''),
-                       seed = as.integer(runif(1, 1e5, 1e6))))
+                       seed = as.integer(runif(1, 1e5, 1e6)))
+}
+
+```
+
+Save the models optionally
+```{r, eval=FALSE}
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/learn_rate_2018_05_04_gbm")
+if(!dir.exists(LOCAL.RESULTS.DIR)) 
+    dir.create(LOCAL.RESULTS.DIR)
+h2o.gridSaver(Map(function(x) paste0("learning_rate_search_",x) , 1:NGrids), results.dir=LOCAL.RESULTS.DIR)
+```
+
+Optionally load the grids
+```{r, eval=FALSE}
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/learn_rate_2018_05_04_gbm")
+models = h2o.gridLoader(Map(function(x) paste0("learning_rate_search_",x) , 1:14), results.dir=LOCAL.RESULTS.DIR)
 ```
 
 Extract the models from each grid in an list of lists. Note here that each grid has `length(target_learning_rates)` GBM models.
-```{r modellist, results='hide', cache=TRUE}
+```{r modellist, cache=TRUE, eval=FALSE}
 # A list of lists of all the trained models
 
-models.lst = sapply(X=1:NGrids,
+models.lst = sapply(X = 1:NGrids,
                     FUN=function(x) {
-                        grid.ids = h2o.getGrid(paste("learning_rate_search_", x, sep=''))
-                        sapply(X=grid.ids@model_ids, FUN=h2o.getModel)
+                        grid.id = h2o.getGrid(paste("learning_rate_search_", x, sep=''))
+                        sapply(X=grid.id@model_ids, FUN=h2o.getModel)
                     })
-print(dim(models.lst))
+```
+
+```{r}
+print(paste(dim(models.lst)))
 ```
 
 First extract the score histories of each of the models into a data frame
@@ -131,13 +159,11 @@ and stuff them into a list.
 
 getRMSEScoreHistory = function (models) {
     # Given a list of model ids get a data frame with its RMSE score history
-    df.grid = data.frame()
     score.history = data.frame()
     # Learning rate of 0.03 seems to be ok.
     for (i in 1:length(models)) {
         model.rmse = h2o.rmse(h2o.performance(models[[i]]))
         lr = models[[i]]@parameters$learn_rate
-        df.grid = rbind(df.grid, c(lr, model.rmse))
         model.rmse.rate = h2o.scoreHistory(models[[i]]) %>%
             data.frame %>%
             pull(validation_rmse)
@@ -146,8 +172,7 @@ getRMSEScoreHistory = function (models) {
                                          ntrees = 1:length(model.rmse.rate),
                                          rmse = model.rmse.rate,
                                          id = i,
-                                         lr = lr,
-                                         id = paste("model_", i, "_lr_", lr, sep='')
+                                         lr = lr
                                          )
                               )
     }
@@ -156,18 +181,11 @@ getRMSEScoreHistory = function (models) {
 
 # Sanity check: each column is one grid. There are NGrids grids
 # and each grid has length(target_learning_rates) models
-assertthat::assert_that(nrow(models.lst) == length(target_learning_rates))
 assertthat::assert_that(ncol(models.lst) == NGrids)
 
 # For each model list in models.lst extract the histories
 score.history.lst = sapply(X = 1:NGrids,
                            function(x) getRMSEScoreHistory(models.lst[, x]))
-```
-
-So how do the learning curves look for each grid? Lets plot them.
-```{r scoreHistory, results='markup'}
-# The axes limits
-
 score.history.combined =
     Reduce(function(x, init) {
                rbind(x, init)
@@ -177,9 +195,12 @@ score.history.combined =
                     mutate(grid_id=i)
             }, 1:NGrids)
     )
+
+head(score.history.combined)
 ```
 
-Plot em!
+So how do the learning curves look for each grid? Lets plot them.
+
 ```{r plots, fig.width=10, fig.height=10}
 
 # I initially tried working with a lits of plots instead of plotting the data directly. Had trouble sizing the plots properly. So backed off and instead used a combined version of score history with vanialla ggplot.
@@ -199,7 +220,7 @@ ggplot(score.history.combined) +
 
 ```
 
-It seems clear that 13/15 of the curves the learning curves corresponding to 0.01-0.02 end up lower without the validation error overshooting.
+It seems clear that 13/15 of the curves the learning curves corresponding to 0.01-0.02 end up lower without the validation error overshooting. We can see that for every discrete learning rate the minimum RMSE for 0.1-0.2 remain quite stable.
 
 ```{r}
 score.history.combined %>% group_by(grid_id, lr) %>% 
@@ -210,7 +231,8 @@ score.history.combined %>% group_by(grid_id, lr) %>%
 
 ```
 
-But the lowest RMSEs do have some values for higher learning rates.
+But the lowest RMSEs do have some overall lowest values for higher learning rates. Not sure what to make of that.
+
 ```{r}
 score.history.combined %>% 
     group_by(grid_id) %>% 
