@@ -17,4 +17,5 @@ results/
 share/
 cache/
 
+generic_doparallel_cluster*.log
 pip-selfcheck.json

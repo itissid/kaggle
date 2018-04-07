@@ -318,11 +318,8 @@ Save these models for offline work.
         if(!is.null(m)) {
             fp = file.path(gbm.results.dir, m@model$origin.model)
             # These models were obtained after a some effort, so this guards against overwriting/polluting them by accident
-            #stopifnot(
-            #      !file.exists(file.path(
-            #                     gbm.results.dir, topk.ids[[i]]))) 
             dir.create(fp)
-            #h2o.saveModel(m, path=fp) # Don't try and save with saveRDS, it does not work
+            h2o.saveModel(m, path=fp) # Don't try and save with saveRDS, it does not work
             h2o.download_pojo(m, path=fp) # Don't try and save with saveRDS, it does not work
             cat(".")
         }
@@ -344,16 +341,18 @@ cvgbms = list()
 for(m.id_file in list.files(gbm.results.dir, recursive=TRUE)) {
 
     m.id_file.path = file.path(gbm.results.dir, m.id_file)
+
     if(endsWith(m.id_file.path, ".java") || endsWith(m.id_file.path, ".jar")) { # Saved POJOs
         flog.info(paste("Not loading ", m.id_file.path))
         next    
     }
-    print(".")
     # Find the slot of the loaded model in the current files
     flog.debug(paste0("Loading ", m.id_file.path))
+    origin.model = strsplit(m.id_file, "/")[[1]][[1]]
     m = h2o.loadModel(m.id_file.path)
-    cvgbms[[m@model$origin.model]] = m
+    cvgbms[[origin.model]] = m
     print('..')
+
 }
 
 ```
@@ -364,28 +363,30 @@ So how do the cross validated models score on the hold out data set?
 
 grid.scores.topk =  Reduce(rbind,
                            Map(function(m) c(
-                                             h2o.rmse(h2o.performance(m, train=TRUE)),
-                                             h2o.rmse(h2o.performance(m, valid=TRUE)),
-                                             m@model_id),
+                                             training_rmse=h2o.rmse(h2o.performance(m, train=TRUE)),
+                                             validation_rmse=h2o.rmse(h2o.performance(m, valid=TRUE)),
+                                             model_id=m@model_id),
                                Map(h2o.getModel,topk.ids[1:20])))
 
-colnames(grid.scores.topk) = c("training_rmse", "validation_rmse", "model_id")
 
-grid.scores.topk %<>% as.data.frame(stringsAsFactors=FALSE) %>% 
-    dplyr::mutate(training_rmse = as.numeric(training_rmse), validation_rmse=as.numeric(validation_rmse)
+grid.scores.topk %<>% 
+    as.data.frame(stringsAsFactors=FALSE) %>% 
+    dplyr::mutate(training_rmse = as.numeric(training_rmse), validation_rmse=as.numeric(validation_rmse))
 
 xval.scores.topk = Reduce(rbind,
     Map(function(i) {
             m = cvgbms[[topk.ids[i]]]
             if(is.null(m)) {
+                # Due to failures some of the models can be NULL
                 flog.warn(paste0("CV slot for model #",i, ", id: ", topk.ids[[i]]," was null."))
                 return(rep(NA,4))
             } else {
-                return(c(h2o.rmse(h2o.performance(m, train=TRUE)),
-                          h2o.rmse(h2o.performance(m, xval=TRUE)),
-                          as.numeric(m@model$cross_validation_metrics_summary['rmse', ]$sd),
-                          h2o.rmse(h2o.performance(m, valid=TRUE)),
-                          topk.ids[[i]]))
+                return(data.frame(
+                          training_cv_rmse=h2o.rmse(h2o.performance(m, train=TRUE)),
+                          five_fold_cv_rmse=h2o.rmse(h2o.performance(m, xval=TRUE)),
+                          five_fold_cv_rmse_sd=as.numeric(m@model$cross_validation_metrics_summary['rmse', ]$sd),
+                          validation_cv_rmse=h2o.rmse(h2o.performance(m, valid=TRUE)),
+                          model_id=topk.ids[[i]]))
             }},
          1:20))
 
@@ -396,10 +397,7 @@ xval.scores.topk = Reduce(rbind,
  # five_fold_cv_rmse": The combined rmse on holdout set of the crossvalidated data
  # five_fold_cv_rmse_sd": the sd of the K fold CV RMSEs
  # validation_cv_rmse: The error of the cross validated model on the hold out data
-colnames(xval.scores.topk) = c("training_cv_rmse", "five_fold_cv_rmse",
-                               "five_fold_cv_rmse_sd", "validation_cv_rmse",
-                               "model_id")
-combined.scores = cbind(grid.scores.topk, xval.scores.topk) %>% data.frame
+combined.scores = dplyr::inner_join(grid.scores.topk, xval.scores.topk, by=c("model_id")) %>% data.frame
 rownames(combined.scores) = 1:20
 print(combined.scores)
 combined.scores %<>% na.omit %>% mutate(x=rownames(.))
