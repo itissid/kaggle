@@ -29,7 +29,7 @@ hyper_params_search_crit = function(
 	    min_split_improvement_opts=1e-05,
 	    nbins_opts = 20,
 	    nbins_cats_opts = 1024,
-	    histogram_type_opts = c("AUTO", "UniformAdaptive", "Random", "QuantilesGlobal", "RoundRobin"),
+	    histogram_type_opts = c("AUTO"),
             strategy="Cartesian") {
             # Creates Hyper parameters for GBM
             # no categorical features in this dataset
@@ -281,8 +281,7 @@ h2o.gridSaver = function(grid.ids, results.dir="results/") {
 
 # Load the models saved by h2o.gridSaver
 h2o.gridLoader = function(grid.ids, results.dir="results") {
-    models = list()
-    for(g.id in grid.ids) {
+    return(sapply(grid.ids, function(g.id) {
         if(!startsWith(results.dir, "/"))
             gid.dir =file.path(getwd(), results.dir, g.id)
         else
@@ -291,14 +290,12 @@ h2o.gridLoader = function(grid.ids, results.dir="results") {
             flog.error(paste0(gid.dir, " does not exist. Can't load grid"))
             stopifnot(FALSE)
         }
-        for(m.id_file in list.files(gid.dir, recursive=TRUE)) {
+        sapply(list.files(gid.dir, recursive=TRUE), function(m.id_file) {
 	    m.id_file.path = file.path(gid.dir, m.id_file)
             print(paste0("Loading ", m.id_file.path))
-            m = h2o.loadModel(m.id_file.path)
-	    models[[m@model_id]] = m
-        }
-    }
-    return(models)
+            h2o.loadModel(m.id_file.path)
+        })
+    }))
 }
 
 # For the models loaded by h2o.gridLoader recover the actual model summaries.
@@ -309,17 +306,61 @@ model_summaries_from_loaded_models = function(models) {
         perf.v = h2o.performance(m, valid=T)
         perf.t = h2o.performance(m, train=T)
         ts = m@model$scoring_history %>% data.frame %>% dplyr::mutate(timestamp = ymd_hms(timestamp)) %>% dplyr::pull(timestamp)
-        approx_time_duration = as.numeric(as.period(interval(ts[1], ts[length(ts)]), units="seconds"))
         params = m@allparameters %>% data.frame %>%
             dplyr::select_at(vars(display_vars)) %>%
             dplyr::distinct()
         m.summary = m@model$model_summary %>%
-            data.frame %>%
-            dplyr::mutate(validation_rmse = perf.v %>% h2o.rmse()) %>%
-            dplyr::mutate(train_rmse = perf.t %>% h2o.rmse()) %>%
-            dplyr::mutate(approx_time_duration = approx_time_duration) %>%
-            select(-model_size_in_bytes)
+            data.frame %>% select(-model_size_in_bytes)
         return(cbind(params, m.summary))
+    }
+    ms = Map(summaryForEach, models)
+    ms = Reduce(rbind, ms)
+    mm = model_metrics_helper(models)
+    cbind(ms, mm)
+}
+
+model_metrics_helper = function(models) {
+
+    summaryForEach <- function(m) {
+        sh = m@model$scoring_history
+        flog.debug(".")
+        if(!is.null(sh)) {
+            ts = sh %>% data.frame %>% dplyr::mutate(timestamp = ymd_hms(timestamp)) %>% dplyr::pull(timestamp)
+        approx_time_duration = as.numeric(as.period(interval(ts[1], ts[length(ts)]), units="seconds"))
+        } else {
+            approx_time_duration = -1
+        }
+        flog.debug("..")
+        data.frame(
+              training_rmse=h2o.rmse(h2o.performance(m, train=TRUE)),
+              five_fold_rmse={
+                  flog.debug("...")
+                  xval_perf = h2o.performance(m, xval=TRUE)
+                  if(!is.null(xval_perf))
+                      h2o.rmse(xval_perf)
+                  else
+                      1e10
+              },
+              five_fold_rmse_sd={
+                  flog.debug("...*")
+                  cv.sum = m@model$cross_validation_metrics_summary
+                  flog.debug(cv.sum)
+                  flog.debug(cv.sum %>% class)
+                  if(!is.null(cv.sum))
+                      as.numeric(cv.sum['rmse', ]$sd)
+                  else
+                      1e10
+              },
+              validation_rmse={
+                  flog.debug("...**")
+                  p = h2o.performance(m, valid=TRUE)
+                  if(!is.null(p))
+                      h2o.rmse(p)
+                  else
+                      1e10
+              },
+              approx_time_duration=approx_time_duration, 
+              model_id = m@model_id)
     }
     ms = Map(summaryForEach, models)
     Reduce(rbind, ms)

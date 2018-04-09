@@ -10,6 +10,8 @@ output:
     keep_tex: false
     fig_caption: true
     latex_engine: pdflatex
+  md_document:
+    variant: markdown_github
 runtime: shiny
 fontsize: 11pt
 geometry: margin=1ine
@@ -35,8 +37,8 @@ library(futile.logger)
 source("h2o/source-for-rmd.R")
 ```
 
-
-```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide'}
+A few of the sections that define the data and the functions are same as the last notebook on learning rate tuning and are not repeated
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=FALSE, results='hide'}
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function. 
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 

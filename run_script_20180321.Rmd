@@ -132,7 +132,7 @@ if(!dir.exists(LOCAL.RESULTS.DIR))
 h2o.gridSaver(Map(function(x) paste0("learning_rate_search_",x) , 1:NGrids), results.dir=LOCAL.RESULTS.DIR)
 ```
 
-Optionally load the grids
+Optionally load the grid models for evaluation
 ```{r, eval=FALSE}
 LOCAL.RESULTS.DIR=paste0(getwd(), "/results/learn_rate_2018_05_04_gbm")
 models = h2o.gridLoader(Map(function(x) paste0("learning_rate_search_",x) , 1:14), results.dir=LOCAL.RESULTS.DIR)
