@@ -14,9 +14,9 @@ output:
     latex_engine: pdflatex
     keep_md: yes
    md_document:
-    variant: markdown_github
     toc: true
     toc_depth: 6
+    variant: markdown_github
 
 runtime: shiny
 fontsize: 11pt
@@ -185,7 +185,7 @@ flog.info(paste0( "you will have to do parallel training of ", NGrids , " grids 
 ```
 
 ```
-## INFO [2018-04-09 17:26:18] you will have to do parallel training of 14 grids with 338688 models each.
+## INFO [2018-04-09 17:28:22] you will have to do parallel training of 14 grids with 338688 models each.
 ```
 
 ##### An optional Parallel Cluster
@@ -297,7 +297,7 @@ flog.info(paste0( "After narrowing grid search, parallel training with ", NGrids
 ```
 
 ```
-## INFO [2018-04-09 17:26:19] After narrowing grid search, parallel training with 10 grids with 151200 models each.
+## INFO [2018-04-09 17:28:22] After narrowing grid search, parallel training with 10 grids with 151200 models each.
 ```
 
 This is still quite a large number of models, but random sampling in this space will give us a more accurate idea of what models do best.
@@ -328,7 +328,7 @@ flog.info(paste0("Loaded ", length(models) , " grid models from memory"))
 ```
 
 ```
-## INFO [2018-04-09 17:26:19] Loaded 10 grid models from memory
+## INFO [2018-04-09 17:28:22] Loaded 10 grid models from memory
 ```
 
 

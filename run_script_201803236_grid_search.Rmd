@@ -14,9 +14,9 @@ output:
     latex_engine: pdflatex
     keep_md: yes
    md_document:
-    variant: markdown_github
     toc: true
     toc_depth: 6
+    variant: markdown_github
 
 runtime: shiny
 fontsize: 11pt
@@ -83,8 +83,9 @@ h2o.connect(ip=CLUSTER.NODE.IP)
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL, t.dates] =  prepareDataWrapper.h2o.gbm.baseline(dates.to.numeric=T, keep.dates=DATE.FEATURE)
 
-list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"), seed=SEED)
 independent.vars = colnames(tr.baseline %>% select(-logerror))
+
+list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrain", "XYValidation", "XYTest"), seed=SEED)
 
 assertthat::assert_that("date" %in% independent.vars)
 ```

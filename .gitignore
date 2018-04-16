@@ -19,3 +19,6 @@ cache/
 
 generic_doparallel_cluster*.log
 pip-selfcheck.json
+
+*_cache/*
+*_files/*

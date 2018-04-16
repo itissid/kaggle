@@ -1,7 +1,8 @@
-# kaggle
-WIP: Refactored and organized the R Code I used for my kaggle contest.
-TODOs: 
-1. Add notebooks
-2. Add spatial routines, kriging and variogram analysis notes.
-3. Add KNN routines for feature selection
-4. Document some of the feature engineering techniques used
+# My Kaggle notebooks
+These kaggle notebooks are an example for tuning  GBM trees using h2o on the Zillow competition.
+- [Tuning the GBM Learning rate](./run_script_20180321.html).
+- [ Adding learning rate annealing to the GBM ](./run_script_20180321_annealing.html)
+- [Tuning the depth of the GBM ](./run_script_201803236_depth.html)
+- [ Tuning rest of the parameters ](./run_script_201803236_grid_search.html)
+
+TODO: upload notebooks for feature engineering

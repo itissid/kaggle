@@ -6,12 +6,12 @@ output:
    html_document:
     css: css/code.css
     highlight: default
+    toc: true
+    toc_depth: 6
     citation_package:
     keep_tex: false
     fig_caption: true
     latex_engine: pdflatex
-  md_document:
-    variant: markdown_github
 runtime: shiny
 fontsize: 11pt
 geometry: margin=1ine
@@ -26,7 +26,7 @@ header-includes:
 - \usetikzlibrary{matrix}
 ---
 
-```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE}
+```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE, results='hide'}
 library(dplyr)
 library(magrittr)
 library(gridExtra)
@@ -35,84 +35,120 @@ library(h2o)
 library(gridExtra)
 library(futile.logger)
 source("h2o/source-for-rmd.R")
+SEED=123456
+h2o.init()
+```
+
+```{r, echo=FALSE}
+# KNITR CONTROL OPTIONS:
+LOAD.DATA=FALSE # Once you run the NB and loaded the data you may want to make this false
+LOAD.DISK.MODELS=TRUE # Once you run the NB the models will be loaded to disk, you might want to kill this option then
 ```
 
 A few of the sections that define the data and the functions are same as the last notebook on learning rate tuning and are not repeated
-```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=FALSE, results='hide', eval=LOAD.DATA==TRUE}
 # The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function. 
 list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL] =  prepareDataWrapper.h2o.gbm.baseline()
 
 independent.vars = colnames(tr.baseline %>% select(-logerror))
 
-list[XTrain, YTrain, XHoldout, YHoldout] = splitTrainingWrapper(tr.baseline, split_percent=0.90, YName="logerror") 
 
-XYTrain.h2o = as.h2o(x = cbind(XTrain, logerror=YTrain), destination_frame="XTrain.h2o")
-XYTest.h2o = as.h2o(x = cbind(XHoldout, logerror=YHoldout), destination_frame="XTest.h2o")
+list[XYTrain.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = 0.85, destination_frames=c("XYTrain.h2o", "XYTest.h2o"), seed=SEED)
 ```
 
+## Annealing added to the tree parameters
 Change the hyper parameters to contain the annealing parameter.
 ```{r training.annealed, cache=TRUE, results="hide"}
-set.seed(123456) 
 target_learning_rates = seq(0.01, 0.05, 0.01)
 # Just change the annealing rate for the hyper parameters
-list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate] = hyper_params_search_crit.learnrate.tune(
-                                                                      learn_rate_opts=target_learning_rates, 
-                                                                      learn_rate_annealing=0.995)
+list[search_criteria.gbm.learnrate, hyper_params.gbm.learnrate.annealed] = hyper_params_search_crit.learnrate.tune(
+                      learn_rate_opts=target_learning_rates, 
+                      learn_rate_annealing=0.995)
 # The search parameters and hyper params to the GBM are
 print(search_criteria.gbm.learnrate %>% data.frame)
-print(hyper_params.gbm.learnrate %>% data.frame)
-fits = sapply(X = 1:NGrids, 
-              FUN=function(x) baseline.fit(
-                       hp=hyper_params.gbm.learnrate, 
-                       sc=search_criteria.gbm.learnrate, 
-                       grid_id = paste("learning_rate_search_annealed", x, sep=''), 
-                       seed = as.integer(runif(1, 1e5, 1e6))))
+print(hyper_params.gbm.learnrate.annealed %>% data.frame)
+```
+The code is exactly the same as before. I will just display the graph of the cross validated learning rate repeated 10 times.
+
+```{r training, cache=TRUE, eval=FALSE, results="hide", echo=FALSE}
+# Randomize and search for the best learning rate.
+fit.annealed = baseline.fit(
+       hp=hyper_params.gbm.learnrate.annealed,
+       sc=search_criteria.gbm.learnrate,
+       grid_id = paste("learning_rate_search_annealed"),
+       seed = SEED, 
+       nfolds=5)
+
 ```
 
-Grab the models asame as last time
-```{r modellist, cache=TRUE}
+## Analysis
+Lets see what are the top learning rates:
+```{r}
+kable(fit.annealed@summary_table %>% data.frame %>% select(learn_rate, residual_deviance) %>% arrange(residual_deviance))
+```
+
+### Plotting the individual learning rate.
+```{r, eval=FALSE, echo=FALSE, results='hide'}
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/learn_rate_2018_15_04_gbm")
+if(!dir.exists(LOCAL.RESULTS.DIR)) 
+    dir.create(LOCAL.RESULTS.DIR)
+h2o.gridSaver(c("learning_rate_search"), results.dir=LOCAL.RESULTS.DIR)
+```
+
+
+```{r, eval=FALSE, echo=FALSE, results='hide'}
+NGrids = 10
+cls = registerCluster(max.cores.per.machine = 6)
+
+fit.anneaeled.bootstrapped = foreach(x = 1:NGrids, .packages= c("h2o")) %dopar% {
+              h2o.connect()
+              baseline.fit(
+                       hp=hyper_params.gbm.learnrate.annealed,
+                       sc=search_criteria.gbm.learnrate,
+                       grid_id = paste("learning_rate_search_annealed_", x, sep=''),
+                       seed = x)
+}
+```
+
+```{r, results='hide', echo=F, eval=F}
+
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/learn_rate_annealed_2018_15_04_gbm.bootstrapped")
+if(!dir.exists(LOCAL.RESULTS.DIR)) 
+    dir.create(LOCAL.RESULTS.DIR)
+h2o.gridSaver(Map(function(x) paste0("learning_rate_search_annealed_", x) , 1:NGrids), results.dir=LOCAL.RESULTS.DIR)
+```
+
+```{r, results='hide', echo=FALSE, eval=LOAD.DISK.MODELS==TRUE}
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/learn_rate_annealed_2018_15_04_gbm.bootstrapped")
+models = h2o.gridLoader(Map(function(x) paste0("learning_rate_search_annealed_", x) , 1:NGrids), results.dir=LOCAL.RESULTS.DIR)
+```
+
+```{r plots.grid, echo=FALSE, fig.width=10, fig.height=10}
 # A list of lists of all the trained models
-models.lst = sapply(X=1:NGrids,
+models.lst = sapply(X = 1:NGrids,
                     FUN=function(x) {
-                        grid.ids = h2o.getGrid(paste("learning_rate_search_annealed", x, sep=''))
-                        sapply(X=grid.ids@model_ids, FUN=h2o.getModel)
+                        grid.id = h2o.getGrid(paste("learning_rate_search_annealed_", x, sep=''))
+                        sapply(X=grid.id@model_ids, FUN=h2o.getModel)
                     })
+score.history.lst = sapply(X = 1:NGrids,
+                           function(x) getRMSEScoreHistory(models.lst[, x]))
 
-```
-
-Grab all the model's score history same as last time
-```{r modellist.annealed, results='hide', cache=TRUE}
-models.lst = sapply(X=1:NGrids,
-                    FUN=function(x) {
-                        the.grid = h2o.getGrid(paste("learning_rate_search_annealed", x, sep=''))
-                        if(length(the.grid@failed_params) == 0) {
-                            return(sapply(X=the.grid@model_ids, FUN=h2o.getModel))
-                       } else {
-                           flog.warn(paste("Model with ID:", the.grid@grid_id, " failed"))
-                           return(sapply(X=the.grid@model_ids, function(x) NA))
-                       }
-                    })
-```
-
-Combine all the histories into one frame.
-```{r plots.annealed, results='markup'}
-# For each model list in models.lst extract the histories
-score.history.lst = sapply(X = 1:NGrids, 
-                           function(x) getRMSEScoreHistory(models.lst[, x])) 
-
-score.history.combined =
-    Reduce(function(x, init) {
+score.history.combined = Reduce(function(x, init) {
                rbind(x, init)
           }, Map(function(i) {
                 score.history.lst[, i] %>%
                     data.frame %>%
                     mutate(grid_id=i)
             }, 1:NGrids)
-    )
-```
+)
 
-Plot em!
-```{r plots, fig.width=10, fig.height=10}
+score.history.combined %>% group_by(grid_id, lr) %>% 
+    dplyr::filter(ntrees==max(ntrees)) %>%
+    data.frame %>% group_by(grid_id) %>% 
+    dplyr::filter(rmse ==min(rmse)) %>%
+    arrange(rmse) %>% kable
+
+# I initially tried working with a lits of plots instead of plotting the data directly. Had trouble sizing the plots properly. So backed off and instead used a combined version of score history with vanialla ggplot.
 min_y_lim = score.history.combined %>% pull(rmse) %>% min
 max_y_lim = score.history.combined %>% pull(rmse) %>% max
 
@@ -126,24 +162,8 @@ ggplot(score.history.combined) +
           strip.background = element_blank(),
           strip.text.x = element_blank()
         )
-```
-Annealing results in more consistent RMSE scores in the 0.1-0.2 range
-
-```{r}
-score.history.combined %>% group_by(grid_id, lr) %>% 
-    dplyr::filter(ntrees==max(ntrees)) %>%
-    data.frame %>% group_by(grid_id) %>% 
-    dplyr::filter(rmse ==min(rmse))
 
 ```
 
-```{r}
-score.history.combined %>% 
-    group_by(grid_id) %>% 
-    dplyr::filter(rmse == min(rmse)) %>% 
-    data.frame %>% 
-    arrange(rmse)
-```
-
-The RMSE due to annealing is higher than without(see previous notebook) which is to be expected.
-But annealing reveals that the learning rates between 0.1-0.2 (ultimately to be choosen by grid search) are the right choice, even if we *don't* end up using annealing in the final fit.
+## Conclusion
+The RMSE with/without annealing does not change. The learnig rates of 0.1-0.2 perform much better with annealing.
