@@ -1,18 +1,8 @@
 ---
-title: Tuning the GBM.
-author: "Sidharth Gupta"
-date: \today
+title: README
 output:
-   html_document:
-    css: css/code.css
-    highlight: default
-    toc: true
-    toc_depth: 6
-    citation_package:
-    keep_tex: false
-    fig_caption: true
-    latex_engine: pdflatex
-runtime: shiny
+    md_document:
+        variant: markdown_github
 fontsize: 11pt
 geometry: margin=1ine
 header-includes:
@@ -27,7 +17,11 @@ header-includes:
 ---
 
 # Notebooks
-- [Tuning the GBM Learning rate](./run_script_20180321.html).
-- [ Adding learning rate annealing to the GBM ](./run_script_20180321_annealing.html)
-- [Tuning the depth of the GBM ](./run_script_201803236_depth.html)
-- [ Tuning rest of the parameters ](./run_script_201803236_grid_search.html)
+```{r echo=FALSE}
+# TODO: Some how auto generate these links.
+```
+
+- [Tuning the GBM Learning rate](http://htmlpreview.github.com/?https://github.com/itissid/kaggle/blob/h2o-gradient-boost-baseline/run_script_20180321.html)
+- [ Adding learning rate annealing to the GBM ](http://htmlpreview.github.com/?https://github.com/itissid/kaggle/blob/h2o-gradient-boost-baseline/run_script_20180321_annealing.html)
+- [Tuning the depth of the GBM ](http://htmlpreview.github.com/?https://github.com/itissid/kaggle/blob/h2o-gradient-boost-baseline/run_script_201803236_depth.html)
+- [ Tuning rest of the parameters ](http://htmlpreview.github.com/?https://github.com/itissid/kaggle/blob/h2o-gradient-boost-baseline/run_script_201803236_grid_search.html)
