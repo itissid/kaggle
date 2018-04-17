@@ -168,7 +168,6 @@ getRMSEScoreHistory = function (models) {
     score.history = data.frame()
     # Learning rate of 0.03 seems to be ok.
     for (i in 1:length(models)) {
-        model.rmse = h2o.rmse(h2o.performance(models[[i]]))
         lr = models[[i]]@parameters$learn_rate
         model.rmse.rate = h2o.scoreHistory(models[[i]]) %>%
             data.frame %>%
