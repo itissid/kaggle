@@ -325,7 +325,7 @@ system(rsync.command)</code></pre>
 all_summaries = model_summaries_from_loaded_models(unlist(models)) %&gt;% arrange(validation_rmse)
 sorted.summaries = all_summaries %&gt;% arrange(validation_rmse)</code></pre>
 <p>Lets look at the top 40 models in the grid. The following is a sample of 106 models which is small as compared to the entire grid. A larger sample would be better. But there are still some useful observations that come out:</p>
-<pre class="r"><code>all_summaries</code></pre>
+<pre class="r"><code>sorted_summaries</code></pre>
 <table>
 <thead>
 <tr class="header">
