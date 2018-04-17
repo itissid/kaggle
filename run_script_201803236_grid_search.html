@@ -1552,7 +1552,7 @@ kable(ensemble.metrics)</code></pre>
 </table>
 <p>The GLM ensemble seems to give a better cross validation RMSE (<code>five_fold_rmse</code>) and better <code>validation_rmse</code> scores. Lets see how the scores are on the kaggle leader board.</p>
 <pre class="r"><code>predictAndWriteModels(Map(function(m) m@model_id, c(ensemble.glm, ensemble.gbm)))</code></pre>
-<p>The ensemble.glm achieved a score of <em>0.0654413</em> and the ensemble.gbm achieved a score of <em>0.0658811</em>, which was poorer than the base models and poorer than the best crossvalidated GBM earlier in the notebook which scored <code>0.0649084</code>. This was a bit unexpected. I am not sure why this might be but perhaps just using ensembles of GBM’s is not the best idea?</p>
+<p>The ensemble.glm achieved a score of <em>0.0654413</em> and the ensemble.gbm achieved a score of <em>0.0658811</em>, which was poorer than the base models and poorer than the best crossvalidated GBM earlier in the notebook which scored <code>0.0649084</code>. This was a bit unexpected. One reason might be that the models may not be diverse enough, I found that the ensemble models had high correlation and low RMSE for the validation data set predictions. But its not guaranteed that this is the only reason.<a href = https://link.springer.com/content/pdf/10.1023/A:1022859003006.pdf>[1]</a></p>
 <p>Lets see if I can improve on this in the next notebook where we do some feature engineering.</p>
 </div>
 

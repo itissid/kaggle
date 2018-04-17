@@ -622,6 +622,6 @@ The GLM ensemble seems to give a better cross validation RMSE (`five_fold_rmse`)
 predictAndWriteModels(Map(function(m) m@model_id, c(ensemble.glm, ensemble.gbm)))
 ```
 
-The ensemble.glm achieved a score of *0.0654413* and the ensemble.gbm achieved a score of *0.0658811*, which was poorer than the base models and poorer than the best crossvalidated GBM earlier in the notebook which scored `0.0649084`. This was a bit unexpected. I am not sure why this might be but perhaps just using ensembles of GBM's is not the best idea?
+The ensemble.glm achieved a score of *0.0654413* and the ensemble.gbm achieved a score of *0.0658811*, which was poorer than the base models and poorer than the best crossvalidated GBM earlier in the notebook which scored `0.0649084`. This was a bit unexpected. One reason might be that the models may not be diverse enough, I found that the ensemble models had high correlation and low RMSE for the validation data set predictions. But its not guaranteed that this is the only reason.[1](https://link.springer.com/content/pdf/10.1023/A:1022859003006.pdf)
 
-Lets see if I can improve on this in the next notebook where we do some feature engineering.
+Lets see if I can improve on the scores by ensembling a model like random forests and some feature engineering.
