@@ -36,9 +36,7 @@ source("h2o/source-for-rmd.R")
 SEED=123456
 SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
 CLUSTER.NODE.IP='localhost' # This would be the IP ADDESS of the h2o cluster (I regularly use ec2 DNS name here)
-CORES.PER.MACHINE=2 # Used for the SNOW cluster.
-REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_17_04_gbm" # h2o.saveModel or saveGrid will save data to the machine where the cluster connection is initiated to(for this notebook its the CLUSTER.NODE>UP)
-LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_06_04_gbm")
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_17_04_gbm")
 PREV.NOTEBOOK.LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_03_04_gbm")
 if(!dir.exists(LOCAL.RESULTS.DIR)) {
     dir.create(LOCAL.RESULTS.DIR, recursive=TRUE)
@@ -121,8 +119,8 @@ baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
         m1 = paste0(names(hp), hp, collapse='\n')
         cat(paste0("Grid executing with params: \n", m1), file=stdout())
         h2o.grid.helper(
-                        h2o.getFrame("XYTrain"),
-                        h2o.getFrame("XYValidation"),
+                        h2o.getFrame("XYTrainv2"),
+                        h2o.getFrame("XYValidationv2"),
                         independentCols=independent.vars,
                         hyper_params = hp,
                         search_criteria = sc,
@@ -138,15 +136,15 @@ train.grid.wrapper = function(hp, sc) {
     foreach::foreach(
         nx = itertools::product(
             max_depth = hp$max_depth,
-            sample_rate = hp$sample_rate
+            min_rows = hp$min_rows
             ),
         grid_id = iter(1:NGrids),
         .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
-        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars"),
+        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars", "SEED"),
         .options.snow=list(progress=progress)) %dopar% {
                 hp_t = hp
                 hp_t$max_depth = nx$max_depth
-                hp_t$sample_rate = nx$sample_rate
+                hp_t$min_rows = nx$min_rows
 
                 return(baseline.fit(
                        hp=hp_t,
