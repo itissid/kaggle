@@ -151,11 +151,8 @@ baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
 ```
 
 
-Now lets train a few models. We train a few models a few times to compare learning rates
-```{r training}
-sc=search_criteria.gbm
-hp=hyper_params.gbm
-NGrids = length(hp$max_depth)*length(hp$learn_rate)
+Now lets train a few models. We train a handful of models and when we have a decent sample(couple 100) we stop.
+```{r trainingFunction}
 
 progress <- function() cat('.')
 # Training over all the parameter space even with RandomDiscrete and a few 100 trees can take a long time. So I chose to parallelize over the two most important parameters the depth and the learning rate. This produces a much larger number of models per depth-learningrate combination to chose from.
@@ -183,6 +180,9 @@ train.grid.wrapper = function(hp, sc) {
         }
 }
 
+sc=search_criteria.gbm
+hp=hyper_params.gbm
+NGrids = length(hp$max_depth)*length(hp$learn_rate)
 pergrid.models = Reduce('*', Map(function(x, init) length(x), hp) )/NGrids
 flog.info(paste0( "you will have to do parallel training of ", NGrids , " grids with ", pergrid.models, " models each."))
 
@@ -203,19 +203,19 @@ clus = registerCluster(localOnly=FALSE, port=SNOW.PORT, instances.opts=spec, COR
 ```
 
 Start the training
-```{r, eval=FALSE}
-models = train.grid.wrapper(hp, search_criteria.gbm)
+```{r trainFirstRoundModels, eval=FALSE}
+firstround.models = train.grid.wrapper(hp, search_criteria.gbm)
 ```
 
 ##### Saving the models for later
 The grids above can take a long time to complete. But with `RandomDiscrete` once a few 100 models have been trained we can stop the cluster and crack on with the analysis. Lets save the grids to disk and work offline with them.  You might want to source the code above and the constants to if you do. One issue with an h2o cluster is when interactive mode a failure on one node can cause models to dissapear, so save the models using the rsyn command in a while loop with a sleep.
-```{r, eval=FALSE}
+```{r saveFirstRoundModels, eval=FALSE}
 h2o.connect(ip=CLUSTER.NODE.IP)
-models = h2o.gridSaver(1:NGrids, results.dir=REMOTE.RESULTS.DIR)
+h2o.gridSaver(1:NGrids, results.dir=REMOTE.RESULTS.DIR)
 ```
 
 The above command saves the models to a remote machine. Copy the results to the local disk to do some analysis on them. Assuming you have access to the cluster you can execute the rsync command:
-```{r, eval=FALSE}
+```{r rsyncModels, eval=FALSE}
 cwd = getwd()
 rsync.command=paste0('mkdir -p results/grid; rsync -Pavz -e "ssh -i $(ls ~/.ssh/sid-aws-key.pem)"  ubuntu@', CLUSTER.NODE.IP ,':', REMOTE.RESULTS.DIR,' ', LOCAL.RESULTS.DIR)
 print(rsync.command)
@@ -231,16 +231,16 @@ system(rsync.command)
 ##### Analysis and Tuning
 
 If you made it here, you might have had to deal with a possible crash of your h2o cluster or shutting it down to avoid a massive EC2 bill. In this case you can reload all those saved models from disk:
-```{r loadGridModels, eval=FALSE, results='hide'}
-models = h2o.gridLoader(1:NGrids, results.dir=LOCAL.RESULTS.DIR)
-all_summaries = model_summaries_from_loaded_models(unlist(models)) %>% arrange(validation_rmse)
-sorted.summaries = all_summaries %>% arrange(validation_rmse)
+```{r loadFirstRoundGridModels, eval=EVALUATE.DISK.MODELS==TRUE, results='hide'}
+firstround.models = h2o.gridLoader(1:NGrids, results.dir=LOCAL.RESULTS.DIR)
+all_summaries = model_summaries_from_loaded_models(unlist(firsround.models)) %>% arrange(validation_rmse)
+sorted.summaries.firstround = all_summaries %>% arrange(validation_rmse)
 ```
 
 Lets look at the top 40 models in the grid. The following is a sample of 106 models which is small as compared to the entire grid. A larger sample would be better. But there are still some useful observations that come out:
 
 ```{r, eval=FALSE}
-all_summaries
+sorted.summaries.firstround
 ```
 
 ```{r, eval=TRUE, echo=FALSE}
@@ -293,7 +293,7 @@ flog.info(paste0( "After narrowing grid search, parallel training with ", NGrids
 
 This is still quite a large number of models, but random sampling in this space will give us a more accurate idea of what models do best.
 ```{r trainNewerModels, eval=FALSE}
-models = train.grid.wrapper(hp, search_criteria.gbm)
+narrowed.models = train.grid.wrapper(hp, search_criteria.gbm)
 ```
 
 Again we save the models
@@ -303,8 +303,8 @@ models = h2o.gridSaver(1:NGrids, results.dir=REMOTE.RESULTS.DIR)
 ```
 
 I ran the grid search again with the new hyper parameters and here are the summaries
-```{r loadNewGridModels, results='hide', eval=EVALUATE.DISK.MODELS==TRUE}
-models = h2o.gridLoader(1:NGrids, results.dir=LOCAL.RESULTS.DIR)
+```{r loadNewGridModels, results='hide', eval=FALSE}
+narrowed.models = h2o.gridLoader(1:NGrids, results.dir=LOCAL.RESULTS.DIR)
 all_summaries = model_summaries_from_loaded_models(unlist(models)) %>% arrange(validation_rmse)
 sorted.summaries = all_summaries %>% arrange(validation_rmse)
 topk.ids = sorted.summaries %>% pull(model_id) %>% as.character
@@ -368,7 +368,7 @@ cvgbms = foreach::foreach (
 ```
 
 Optionally save these models for offline work.
-```{r saveGbms, cache=TRUE, eval=FALSE}
+```{r saveGbms, cache=TRUE, eval=FALSE, echo=FALSE}
 gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "cv_models")
 dir.create(gbm.results.dir)
 for(m in cvgbms) {
@@ -384,7 +384,7 @@ for(m in cvgbms) {
 ```
 
 Optionally load the models if you are resuming work on saved models.
-```{r loadTunedGBMs, results='hide', eval=EVALUATE.DISK.MODELS==TRUE}
+```{r loadTunedGBMs, results='hide', eval=EVALUATE.DISK.MODELS==TRUE, echo=FALSE}
 # Since the models are loaded from disk. the order they are in is not the same as the topk.ids. So we need to take care of that here
 gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "cv_models")
 if(!dir.exists(gbm.results.dir)) {
@@ -624,4 +624,4 @@ predictAndWriteModels(Map(function(m) m@model_id, c(ensemble.glm, ensemble.gbm))
 
 The ensemble.glm achieved a score of *0.0654413* and the ensemble.gbm achieved a score of *0.0658811*, which was poorer than the base models and poorer than the best crossvalidated GBM earlier in the notebook which scored `0.0649084`. This was a bit unexpected. One reason might be that the models may not be diverse enough, I found that the ensemble models had high correlation and low RMSE for the validation data set predictions. But its not guaranteed that this is the only reason.[1](https://link.springer.com/content/pdf/10.1023/A:1022859003006.pdf)
 
-Lets see if I can improve on the scores by ensembling a model like random forests and some feature engineering.
+Lets see if I can improve on the scores by ensembling a model like random forests.

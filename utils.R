@@ -5,6 +5,7 @@ source("datadefs.R")
 source("utils/io.R")
 source("utils/spatial.R")
 source("features.R")
+source("imputation.R")
 source("https://raw.githubusercontent.com/ggrothendieck/gsubfn/master/R/list.R")
 
 #properties with high 75th percentile of the abs_error.
@@ -44,6 +45,11 @@ copy_to_clip = function(obj) {
 # 2. rename the columns to human readable form
 # 3. Clean up the data: Remove outliers, remove rows with certain amounts of missing data. etc
 # 3. Do basic feature engineering: Log Transformation, Using vtreat, convert features to factors
+# Things to take care of:
+    # Generally speaking  addition of things to the data set, specifically new columns and imputed values should come BEFORE
+    # deletion of data, example removing rows/columns with too many NAs, outlier removal etc
+    # Removing of columns(e.g. with too many NA's) should be done after imputations.
+
 # This routine is called by other algorithms and those are the ones that set the default.
 prepareData = function(
                        pr='inputs/properties_2016.csv',
@@ -59,6 +65,8 @@ prepareData = function(
                        categorical.to.numeric=T,
                        convert.to.categorical=F,
                        features.categorical, # which features to convert to factors
+                       impute.NA.0 = F,
+                       impute.NA.0.features = c(),
                        #### Data cleanup ####
                        missing.feature.cutoff.frac = 0.10,
                        remove.outliers=T,
@@ -98,6 +106,15 @@ prepareData = function(
     # Impute some common sense variables
     # transactions.tmp = transactions.enc %>% round1Impute()
     # properties.tmp = properties.enc %>% round1Impute()
+    if(impute.NA.0) {
+        if(length(impute.NA.0.features) > 0) {
+            flog.info(paste("Imputing the following features with 0",
+                            paste0(impute.NA.0.features, collapse=', ')))
+            properties.tmp %<>% imputeNA0(features=impute.NA.0.features)
+        } else {
+            flog.warn("Imputation flag was on but no features provided")
+        }
+    }
 
     #########################################################################
     ############### GET THE TREATMENTS BEFORE YOU DO ANYTHING ELSE ##########
@@ -167,7 +184,7 @@ prepareData = function(
     }
 
     if(large.missing.features.prune==T) {
-        features.pruned = properties.%<>%
+        features.pruned = properties.tmp %<>%
             dplyr::select(c(pruneFeatures(properties.tmp, missing.feature.cutoff.frac), "logerror"))
         features.net.pruned = set.diff(features.pruned, features.excluded)
         flog.info(paste("*** Pruned additional ", length(features.net.pruned), " features: "))

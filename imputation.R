@@ -21,6 +21,22 @@ round1ImputeHelper = function(df, var_name, mutate_call) {
 # Order of imputation: First impute the region_county and region_neighbour proprerties.
 
 # NOTED: Issue with imputation using lat long in properties: 11437 rows in properties are not having longitude and latitude and region_county property.
+imputeNA0 = function(df, features) {
+    for(f in features) {
+
+        if(is.factor(df[, f])) {
+            facna = addNA(df[, f])
+            stopifnot(!("0" %in% levels(facna)))
+            levels(facna) = c(levels(df[, f]), 0)
+            df[, f] = facna
+        } else {
+            stopifnot(!(0 %in% df[, f]))
+            df[is.na(df[, f]), f] = 0
+        }
+    }
+    df
+}
+
 round1Impute = function(df) {
     # Simply impute 0 for na for certain (county subset, feature) pair
     createRule = function (counties, var_name) {

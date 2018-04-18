@@ -123,6 +123,8 @@ prepareDataWrapper.h2o.gbm.baseline = function(
                        keep.dates=F, # should we keep dates in the training data set
                        dates.to.numeric=F, # Convert the transaction dates to numeric
                        categorical.to.numeric=F, # h2o does this by default: https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/data-science/xgboost.rst
+                       impute.NA.0 = F,
+                       impute.NA.0.features = c(),
                        convert.to.categorical=T, # but convert some of these features to categorical so that h2o handles it properly
                        taxbyarea.normalize=F,
                        large.missing.features.prune=F, # h2o's docs says it treats missing data as information. So we won't delete rows
@@ -145,6 +147,8 @@ prepareDataWrapper.h2o.gbm.baseline = function(
          omit.nas=omit.nas,
          do.vtreat=do.vtreat,
          categorical.to.numeric=categorical.to.numeric,
+         impute.NA.0 = impute.NA.0,
+         impute.NA.0.features = impute.NA.0.features,
          convert.to.categorical=convert.to.categorical,
          taxbyarea.normalize=taxbyarea.normalize,
          vtreat.opts=vtreat.opts,
@@ -303,9 +307,6 @@ model_summaries_from_loaded_models = function(models) {
   display_vars = c(
        "model_id", "nbins", "nbins_top_level", "nbins_cats", "learn_rate", "ntrees", "min_rows", "nbins",  "sample_rate", "col_sample_rate", "col_sample_rate_change_per_level", "col_sample_rate_per_tree", "min_split_improvement", "histogram_type")
     summaryForEach <- function(m) {
-        perf.v = h2o.performance(m, valid=T)
-        perf.t = h2o.performance(m, train=T)
-        ts = m@model$scoring_history %>% data.frame %>% dplyr::mutate(timestamp = ymd_hms(timestamp)) %>% dplyr::pull(timestamp)
         params = m@allparameters %>% data.frame %>%
             dplyr::select_at(vars(display_vars)) %>%
             dplyr::distinct()
@@ -316,7 +317,7 @@ model_summaries_from_loaded_models = function(models) {
     ms = Map(summaryForEach, models)
     ms = Reduce(rbind, ms)
     mm = model_metrics_helper(models)
-    cbind(ms, mm)
+    inner_join(ms, mm, by=c("model_id"))
 }
 
 model_metrics_helper = function(models) {
@@ -325,7 +326,9 @@ model_metrics_helper = function(models) {
         sh = m@model$scoring_history
         flog.debug(".")
         if(!is.null(sh)) {
-            ts = sh %>% data.frame %>% dplyr::mutate(timestamp = ymd_hms(timestamp)) %>% dplyr::pull(timestamp)
+            ts = sh %>% data.frame %>%
+                dplyr::mutate(timestamp = ymd_hms(timestamp)) %>%
+                dplyr::pull(timestamp)
         approx_time_duration = as.numeric(as.period(interval(ts[1], ts[length(ts)]), units="seconds"))
         } else {
             approx_time_duration = -1
@@ -359,7 +362,7 @@ model_metrics_helper = function(models) {
                   else
                       1e10
               },
-              approx_time_duration=approx_time_duration, 
+              approx_time_duration=approx_time_duration,
               model_id = m@model_id)
     }
     ms = Map(summaryForEach, models)
