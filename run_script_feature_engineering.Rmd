@@ -108,8 +108,8 @@ list[search_criteria.gbm, hyper_params.gbm] = hyper_params_search_crit(
 	  strategy="RandomDiscrete"
     )
 
-NGrids = length(hp$max_depth)*length(hp$learn_rate)
-pergrid.models = Reduce('*', Map(function(x, init) length(x), hp) )/NGrids
+NGrids = length(hyper_params.gbm$max_depth)*length(hyper_params.gbm$sample_rate)
+pergrid.models = Reduce('*', Map(function(x, init) length(x), hyper_params.gbm))/NGrids
 flog.info(paste0( "After narrowing grid search, parallel training with ", NGrids , " grids with ", pergrid.models, " models each."))
 
 ```
@@ -133,6 +133,7 @@ baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
 
 }
 
+progress <- function() cat('.')
 train.grid.wrapper = function(hp, sc) {
     foreach::foreach(
         nx = itertools::product(
@@ -143,11 +144,9 @@ train.grid.wrapper = function(hp, sc) {
         .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
         .export=c("baseline.fit", "h2o.grid.helper", "independent.vars"),
         .options.snow=list(progress=progress)) %dopar% {
-                max_depth = nx$max_depth
-                learn_rate = nx$learn_rate
                 hp_t = hp
-                hp_t$max_depth = max_depth
-                hp_t$sample_rate = sample_rate
+                hp_t$max_depth = nx$max_depth
+                hp_t$sample_rate = nx$sample_rate
 
                 return(baseline.fit(
                        hp=hp_t,
@@ -174,10 +173,9 @@ clus = registerCluster(localOnly=FALSE, port=SNOW.PORT, instances.opts=spec, COR
 
 Start the training
 ```{r trainFirstRoundModels, eval=FALSE}
-firstround.models = train.grid.wrapper(hp, search_criteria.gbm)
+firstround.models = train.grid.wrapper(hyper_params.gbm, search_criteria.gbm)
 
 ```
-
 
 Optionally save these models for offline work.
 ```{r saveGbms, echo=FALSE, eval=FALSE, }
