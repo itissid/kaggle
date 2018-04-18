@@ -1,0 +1,210 @@
+---
+title: Feature Engineering and fitting with GBM
+author: "Sidharth Gupta"
+date: \today
+output:
+   html_document:
+    css: css/code.css
+    highlight: default
+    citation_package:
+    keep_tex: false
+    fig_caption: true
+    latex_engine: pdflatex
+runtime: shiny
+fontsize: 11pt
+geometry: margin=1ine
+header-includes:
+- \usepackage{indentfirst}
+- \usepackage{graphicx}
+- \usepackage{geometry}
+- \usepackage{subfigure}
+- \usepackage{amsmath}
+- \usepackage{listings}
+- \usepackage{tikz}
+- \usetikzlibrary{matrix}
+---
+
+
+```{r setup, tidy = TRUE, message = FALSE, warning = FALSE, error = FALSE, results='hide'}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(h2o)
+library(kableExtra)
+source("utils/AmazonEC2.R")
+source("h2o/source-for-rmd.R")
+SEED=123456
+SNOW.PORT=12345 # This port should also be opened in the AWS Security group with which the instances were created.
+CLUSTER.NODE.IP='localhost' # This would be the IP ADDESS of the h2o cluster (I regularly use ec2 DNS name here)
+CORES.PER.MACHINE=2 # Used for the SNOW cluster.
+REMOTE.RESULTS.DIR="/home/ubuntu/workspace/kaggle/results/2018_17_04_gbm" # h2o.saveModel or saveGrid will save data to the machine where the cluster connection is initiated to(for this notebook its the CLUSTER.NODE>UP)
+LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_06_04_gbm")
+PREV.NOTEBOOK.LOCAL.RESULTS.DIR=paste0(getwd(), "/results/2018_03_04_gbm")
+if(!dir.exists(LOCAL.RESULTS.DIR)) {
+    dir.create(LOCAL.RESULTS.DIR, recursive=TRUE)
+}
+DATE.FEATURE=TRUE # If I use data with date as a feature I use this
+h2o.init()
+
+```
+```{r, echo=FALSE}
+# KNITR CONTROL OPTIONS: 
+LOAD.DATA=TRUE# Once you run the NB and loaded the data you may want to make this false 
+EVALUATE.DISK.MODELS=FALSE # Once you run the NB the models will be loaded to disk, you might want to kill this option then
+```
+
+##### Setting up the data
+Including some features for per square foot, rooms per square feet, house value vs real value etc
+```{r data, cache=TRUE, message=FALSE, error=FALSE, warning=FALSE, echo=TRUE, results='hide', eval=LOAD.DATA==TRUE}
+h2o.connect(ip=CLUSTER.NODE.IP)
+# The function for reading the data does a few things by default. It makes categorical  variables where ever necessar, and log transforms the large variables like for taxes etc. See documentation of that function.
+list[tr.baseline, pr.baseline, vtreatIdentityFn, tplan.NULL, t.dates] =  prepareDataWrapper.h2o.gbm.baseline(
+            dates.to.numeric=T, 
+            keep.dates=DATE.FEATURE, 
+            taxbyarea.normalize=T, 
+            impute.NA.0 = T,
+            impute.NA.0.features = c("num_pool", "area_pool", "flag_fireplace", "num_fireplace", "heating", "aircon", "deck", "area_shed", "area_basement", "flag_tub", "flag_tub_extra", "area_patio", "quality")) 
+#TODO: Framing, material.
+
+list[XYTrain.h2o, XYValidation.h2o, XYTest.h2o] = h2o.splitFrame(as.h2o(tr.baseline), ratios = c(0.70, 0.15), destination_frames=c("XYTrainv2", "XYValidationv2", "XYTestv2"), seed=SEED)
+independent.vars = colnames(tr.baseline %>% select(-logerror))
+
+assertthat::assert_that("date" %in% independent.vars)
+```
+
+Lets see if we can improve on the models in the [previous notenook](http://htmlpreview.github.com/?https://github.com/itissid/kaggle/blob/h2o-gradient-boost-baseline/run_script_201803236_grid_search.html) by retraining on these models. We will use the parameters of the narrowed grid to do a grid search and gather models in the same way as before.
+
+```{r hyperParams, eval=FALSE, results='hide', echo=F}
+list[search_criteria.gbm, hyper_params.gbm] = hyper_params_search_crit(
+          max_depth_opts=seq(10, 15, 1),
+          learn_rate_opts=0.02,
+          learn_rate_annealing = 0.995, # Chosen from last notebook
+          ## search a large space of row sampling rates per tree
+          sample_rate = seq(0.6, 0.8, 0.1),
+
+          ## search a large space of column sampling rates per split
+          col_sample_rate_opts = seq(0.5, 0.8, 0.1),
+
+          ## search a large space of column sampling rates per tree
+          col_sample_rate_per_tree_opts = seq(0.6, 1, 0.2),
+
+          ## search a large space of how column sampling per split should change as a function of the depth of the split
+          col_sample_rate_change_per_level_opts = seq(0.9,1.1,0.1),
+
+          ## search a large space of the number of min rows in a terminal node
+          min_rows_opts = c(15, 20),
+
+          ## search a large space of the number of bins for split-finding for continuous and integer columns
+          nbins_opts = 2^seq(4, 9, 1),
+
+          ## search a large space of the number of bins for split-finding for categorical columns
+          nbins_cats_opts = 2^seq(5, 6, 1),
+
+          ## search a few minimum required relative error improvement thresholds for a split to happen
+          min_split_improvement_opts = c(1e-8, 1e-6, 1e-4),
+
+          ## try all histogram types (QuantilesGlobal and RoundRobin are good for numeric columns with outliers)
+          histogram_type_opts = c("QuantilesGlobal","RoundRobin"),
+	  strategy="RandomDiscrete"
+    )
+
+NGrids = length(hp$max_depth)*length(hp$learn_rate)
+pergrid.models = Reduce('*', Map(function(x, init) length(x), hp) )/NGrids
+flog.info(paste0( "After narrowing grid search, parallel training with ", NGrids , " grids with ", pergrid.models, " models each."))
+
+```
+
+```{r}
+
+baseline.fit = function(hp, sc, independent.vars, grid_id, seed=SEED) {
+        h2o.connect()
+        m1 = paste0(names(hp), hp, collapse='\n')
+        cat(paste0("Grid executing with params: \n", m1), file=stdout())
+        h2o.grid.helper(
+                        h2o.getFrame("XYTrain"),
+                        h2o.getFrame("XYValidation"),
+                        independentCols=independent.vars,
+                        hyper_params = hp,
+                        search_criteria = sc,
+                        algorithm="gbm",
+                        grid_id=grid_id,
+                        seed = seed)
+        cat("Done", file=stdout())
+
+}
+
+train.grid.wrapper = function(hp, sc) {
+    foreach::foreach(
+        nx = itertools::product(
+            max_depth = hp$max_depth,
+            sample_rate = hp$sample_rate
+            ),
+        grid_id = iter(1:NGrids),
+        .packages=c("h2o", "dplyr", "magrittr", "futile.logger"),
+        .export=c("baseline.fit", "h2o.grid.helper", "independent.vars"),
+        .options.snow=list(progress=progress)) %dopar% {
+                max_depth = nx$max_depth
+                learn_rate = nx$learn_rate
+                hp_t = hp
+                hp_t$max_depth = max_depth
+                hp_t$sample_rate = sample_rate
+
+                return(baseline.fit(
+                       hp=hp_t,
+                       sc=sc,
+                       grid_id=grid_id,
+		       seed=SEED))
+        }
+}
+```
+
+## Train on the cluster 
+
+Initialize the AWS h2o cluster using snow
+```{r snowcluster, eval=FALSE}
+
+instances = getExistingInstancesPublicDNS()
+print(instances)
+live_instances = instances
+# The snow cluster is used if I want to execute the grid on multiple machines. A regular cluster is used if on local.
+
+spec = clusterSpecFromInstances(live_instances)
+clus = registerCluster(localOnly=FALSE, port=SNOW.PORT, instances.opts=spec, CORES.PER.MACHINE)
+```
+
+Start the training
+```{r trainFirstRoundModels, eval=FALSE}
+firstround.models = train.grid.wrapper(hp, search_criteria.gbm)
+
+```
+
+
+Optionally save these models for offline work.
+```{r saveGbms, echo=FALSE, eval=FALSE, }
+gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "cv_models")
+dir.create(gbm.results.dir)
+i = 1
+for(m in cvgbms) {
+    if(!is.null(m)) {
+        fp = file.path(gbm.results.dir, m@model$origin.model)
+        # These models were obtained after a some effort, so this guards against overwriting/polluting them by accident
+        dir.create(fp)
+        h2o.saveModel(m, path=fp) # Don't try and save with saveRDS, it does not work
+        h2o.download_pojo(m, path=fp) # Don't try and save with saveRDS, it does not work
+        cat(".")
+    }
+    i = i + 1
+}
+
+```
+
+Optionally load the models if you are resuming work on saved models.
+```{r loadTunedGBMs, results='hide', eval=EVALUATE.DISK.MODELS==TRUE}
+# Since the models are loaded from disk. the order they are in is not the same as the topk.ids. So we need to take care of that here
+gbm.results.dir = file.path(LOCAL.RESULTS.DIR, "cv_models")
+if(!dir.exists(gbm.results.dir)) {
+    flog.warn(paste0("Dir ", gbm.results.dir, " does not exist"))
+    stopifnot(FALSE)
+}
+
+
